@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+release/
+build/
+
+# Environment
+.env
+.env.local
+
+# SQLite database files (generated locally by Prisma migrations)
+prisma/*.db
+prisma/*.db-journal
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# TypeScript build info
+*.tsbuildinfo
