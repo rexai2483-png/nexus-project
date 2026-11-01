@@ -1,13 +1,15 @@
 import { prisma, disconnectDatabase, databaseUrl, migrationsDir } from "./db/client";
 import { applyPendingMigrations } from "./db/migrate";
 import { recordSystemEvent } from "./services/activityService";
+import { getAiStatus } from "./ai/providerFactory";
 
 export * as settingsService from "./services/settingsService";
 export * as taskService from "./services/taskService";
 export * as activityService from "./services/activityService";
 export * as approvalService from "./services/approvalService";
 export * as systemService from "./services/systemService";
-export { prisma, disconnectDatabase };
+export * as conversationService from "./services/conversationService";
+export { prisma, disconnectDatabase, getAiStatus };
 
 /**
  * Backend bootstrap. Called once from the Electron main process after

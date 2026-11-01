@@ -29,6 +29,12 @@ export type TaskStepStatus =
 
 export type MessageRole = "USER" | "ASSISTANT" | "SYSTEM";
 
+/**
+ * The AI's classification of what a user instruction is asking for.
+ * Set on the ASSISTANT message that replies to it.
+ */
+export type MessageIntent = "CONVERSATION" | "TASK" | "CLARIFICATION" | "SENSITIVE";
+
 export type ApprovalStatus = "PENDING" | "APPROVED" | "DENIED" | "EXPIRED";
 
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
@@ -62,11 +68,19 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export interface ConversationDetail extends Conversation {
+  messages: Message[];
+}
+
 export interface Message {
   id: string;
   conversationId: string;
   role: MessageRole;
   content: string;
+  /** Set on an ASSISTANT message once the AI has classified the turn. */
+  intent: MessageIntent | null;
+  /** Set when this message is the one that proposed `taskId`. */
+  taskId: string | null;
   createdAt: string;
 }
 
@@ -74,9 +88,24 @@ export interface Task {
   id: string;
   title: string;
   description: string | null;
+  /** The user's original natural-language instruction. */
+  instruction: string | null;
+  /** AI-determined objective — what success looks like. */
+  objective: string | null;
+  /** Risks the AI identified while planning. */
+  risks: string[];
+  /** Applications/resources the AI identified as required. */
+  requiredResources: string[];
+  /** How NEXUS would know the task is complete. */
+  completionCriteria: string | null;
+  /** True when the AI (or a server-side safety override) flagged this as sensitive. */
+  sensitive: boolean;
   status: TaskStatus;
+  conversationId: string | null;
   createdAt: string;
   updatedAt: string;
+  stepCount: number;
+  pendingApprovalCount: number;
 }
 
 export interface TaskStep {
@@ -84,9 +113,15 @@ export interface TaskStep {
   taskId: string;
   order: number;
   description: string;
+  requiresApproval: boolean;
   status: TaskStepStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TaskDetail extends Task {
+  steps: TaskStep[];
+  approvalRequests: ApprovalRequest[];
 }
 
 export interface ExecutionLog {
@@ -142,4 +177,38 @@ export interface SystemStatus {
   chromeVersion: string;
   uptimeSeconds: number;
   dbConnected: boolean;
+}
+
+/**
+ * Why a `messages.send` call did not produce an AI reply. Never includes
+ * credentials or raw provider errors — see backend/ai/errors.ts for the
+ * full-detail version kept server-side.
+ */
+export type AiErrorCode =
+  | "NOT_CONFIGURED"
+  | "AUTH_ERROR"
+  | "RATE_LIMITED"
+  | "NETWORK_ERROR"
+  | "INVALID_RESPONSE"
+  | "UNKNOWN";
+
+export interface AiErrorInfo {
+  code: AiErrorCode;
+  message: string;
+}
+
+/** Whether an AI provider is configured, without ever exposing the key itself. */
+export interface AiStatus {
+  configured: boolean;
+  provider: string;
+  model: string;
+}
+
+export interface SendMessageResult {
+  userMessage: Message;
+  /** Null when the AI call failed — see `error`. The user's message is still saved. */
+  assistantMessage: Message | null;
+  /** Non-null when the assistant message proposed a new task. */
+  task: Task | null;
+  error: AiErrorInfo | null;
 }

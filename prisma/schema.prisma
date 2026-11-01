@@ -39,6 +39,7 @@ model Conversation {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]
+  tasks     Task[]
 
   @@index([updatedAt])
 }
@@ -51,9 +52,17 @@ model Message {
   /// "USER" | "ASSISTANT" | "SYSTEM"
   role           String
   content        String
+  /// The AI's classification behind an ASSISTANT reply.
+  /// "CONVERSATION" | "TASK" | "CLARIFICATION" | "SENSITIVE"
+  intent         String?
+  /// Set when this message proposed the linked task (never set because a
+  /// task was executed — NEXUS does not execute tasks yet).
+  taskId         String?
+  task           Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
+  @@index([taskId])
 }
 
 /// A unit of work the user has asked NEXUS to carry out. Execution is not
@@ -62,8 +71,25 @@ model Task {
   id             String       @id @default(cuid())
   title          String
   description    String?
+  /// The user's original natural-language instruction that produced this task.
+  instruction    String?
+  /// The AI-determined objective — what success looks like.
+  objective      String?
+  /// JSON array of risk strings identified by the AI while planning.
+  risks              Json?
+  /// JSON array of applications/resources the AI identified as required.
+  requiredResources  Json?
+  /// Free-text description of how NEXUS would know the task is complete.
+  completionCriteria String?
+  /// True when the AI classified the originating instruction as a
+  /// potentially sensitive operation. Every step on a sensitive task
+  /// requires approval, regardless of what the AI proposed.
+  sensitive      Boolean      @default(false)
   /// "PENDING" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED"
+  /// This sprint only ever produces "PENDING" (planned, not started) tasks.
   status         String       @default("PENDING")
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   agentSessionId String?
   agentSession   AgentSession? @relation(fields: [agentSessionId], references: [id])
   createdAt      DateTime     @default(now())
@@ -72,9 +98,11 @@ model Task {
   steps             TaskStep[]
   executionLogs     ExecutionLog[]
   approvalRequests  ApprovalRequest[]
+  messages          Message[]
 
   @@index([status])
   @@index([createdAt])
+  @@index([conversationId])
 }
 
 /// A single ordered step within a Task's plan.
@@ -84,6 +112,9 @@ model TaskStep {
   task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   order       Int
   description String
+  /// Whether this step must be explicitly approved before NEXUS may act on
+  /// it in a future execution phase. Nothing executes in this sprint.
+  requiresApproval Boolean @default(false)
   /// "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED"
   status      String   @default("PENDING")
   createdAt   DateTime @default(now())

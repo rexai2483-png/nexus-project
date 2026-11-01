@@ -1,9 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ActivityListInput,
+  ConversationCreateInput,
+  ConversationGetInput,
   IpcChannel,
+  MessageSendInput,
   NexusBridge,
   SettingsUpdateInput,
+  TaskGetInput,
 } from "../shared/types/ipc";
 
 /**
@@ -30,8 +34,14 @@ const Channels = {
   SettingsGet: "settings:get",
   SettingsUpdate: "settings:update",
   TasksList: "tasks:list",
+  TasksGet: "tasks:get",
   ActivityList: "activity:list",
   ApprovalsListPending: "approvals:listPending",
+  ConversationsList: "conversations:list",
+  ConversationsCreate: "conversations:create",
+  ConversationsGet: "conversations:get",
+  MessagesSend: "messages:send",
+  AiGetStatus: "ai:getStatus",
 } as const satisfies Record<string, IpcChannel>;
 
 const nexusBridge: NexusBridge = {
@@ -45,6 +55,7 @@ const nexusBridge: NexusBridge = {
   },
   tasks: {
     list: () => ipcRenderer.invoke(Channels.TasksList),
+    get: (input: TaskGetInput) => ipcRenderer.invoke(Channels.TasksGet, input),
   },
   activity: {
     list: (input?: ActivityListInput) =>
@@ -52,6 +63,18 @@ const nexusBridge: NexusBridge = {
   },
   approvals: {
     listPending: () => ipcRenderer.invoke(Channels.ApprovalsListPending),
+  },
+  conversations: {
+    list: () => ipcRenderer.invoke(Channels.ConversationsList),
+    create: (input?: ConversationCreateInput) =>
+      ipcRenderer.invoke(Channels.ConversationsCreate, input),
+    get: (input: ConversationGetInput) => ipcRenderer.invoke(Channels.ConversationsGet, input),
+  },
+  messages: {
+    send: (input: MessageSendInput) => ipcRenderer.invoke(Channels.MessagesSend, input),
+  },
+  ai: {
+    getStatus: () => ipcRenderer.invoke(Channels.AiGetStatus),
   },
 };
 

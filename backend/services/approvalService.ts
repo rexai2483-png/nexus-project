@@ -1,7 +1,7 @@
 import { prisma } from "../db/client";
 import type { ApprovalRequest, ApprovalStatus } from "../../shared/types/models";
 
-function toDto(row: {
+export function toApprovalRequestDto(row: {
   id: string;
   taskId: string | null;
   taskStepId: string | null;
@@ -34,5 +34,5 @@ export async function listPendingApprovals(): Promise<ApprovalRequest[]> {
     where: { status: "PENDING" },
     orderBy: { requestedAt: "asc" },
   });
-  return rows.map(toDto);
+  return rows.map(toApprovalRequestDto);
 }
