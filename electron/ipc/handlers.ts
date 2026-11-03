@@ -7,6 +7,7 @@ import {
   approvalService,
   systemService,
   conversationService,
+  agentManager,
   getAiStatus,
 } from "../../backend";
 
@@ -60,4 +61,22 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(IpcChannels.AiGetStatus, () => getAiStatus());
+
+  ipcMain.handle(IpcChannels.ApprovalsDecide, (_event, input) =>
+    agentManager.decideApproval(input.approvalRequestId, input.decision),
+  );
+
+  ipcMain.handle(IpcChannels.AgentGetStatus, () => agentManager.getAgentStatus());
+  ipcMain.handle(IpcChannels.AgentStart, () => agentManager.startAgentSession());
+  ipcMain.handle(IpcChannels.AgentStop, () => agentManager.stopAgentSession());
+  ipcMain.handle(IpcChannels.AgentEmergencyStop, () => agentManager.emergencyStop());
+  ipcMain.handle(IpcChannels.AgentListActions, (_event, input) =>
+    agentManager.listRecentActions(input?.limit),
+  );
+  ipcMain.handle(IpcChannels.AgentSubmitAction, (_event, input) =>
+    agentManager.submitAction(input.actionType, input.parameters),
+  );
+  ipcMain.handle(IpcChannels.AgentCancelAction, (_event, input) =>
+    agentManager.cancelAction(input.actionId),
+  );
 }

@@ -39,7 +39,18 @@ export type ApprovalStatus = "PENDING" | "APPROVED" | "DENIED" | "EXPIRED";
 
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
-export type AgentSessionStatus = "ACTIVE" | "IDLE" | "ENDED";
+export type AgentSessionStatus = "ACTIVE" | "IDLE" | "HALTED" | "ENDED";
+
+export type AgentActionStatus =
+  | "PENDING"
+  | "AWAITING_APPROVAL"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELLED"
+  | "REJECTED";
+
+export type AgentConnectionState = "DISCONNECTED" | "CONNECTING" | "CONNECTED";
 
 export type SystemEventType = "INFO" | "WARNING" | "ERROR" | "SECURITY";
 
@@ -137,6 +148,7 @@ export interface ApprovalRequest {
   id: string;
   taskId: string | null;
   taskStepId: string | null;
+  agentActionId: string | null;
   title: string;
   description: string;
   status: ApprovalStatus;
@@ -158,6 +170,38 @@ export interface AgentSession {
   status: AgentSessionStatus;
   startedAt: string;
   endedAt: string | null;
+  haltedAt: string | null;
+  lastHeartbeatAt: string | null;
+}
+
+export interface AgentAction {
+  id: string;
+  sessionId: string;
+  type: string;
+  parameters: Record<string, unknown>;
+  permissionLevel: "LOW" | "ELEVATED" | "SENSITIVE";
+  requiresApproval: boolean;
+  status: AgentActionStatus;
+  approvalRequestId: string | null;
+  result: unknown;
+  errorCode: string | null;
+  errorMessage: string | null;
+  screenshotPath: string | null;
+  submittedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+/** Live connection/session info reported by `agent:getStatus`. */
+export interface AgentStatusSnapshot {
+  connectionState: AgentConnectionState;
+  sessionId: string | null;
+  sessionStatus: AgentSessionStatus | null;
+  startedAt: string | null;
+  lastHeartbeatAt: string | null;
+  haltedUntilRestart: boolean;
+  activeActionCount: number;
+  platform: string | null;
 }
 
 export interface SystemEvent {

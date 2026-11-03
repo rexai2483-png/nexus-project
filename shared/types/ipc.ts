@@ -13,7 +13,10 @@
  * electron/preload.ts. Nothing else may bypass this contract.
  */
 
+import type { AgentActionType } from "./agentActions";
 import type {
+  AgentAction,
+  AgentStatusSnapshot,
   AiStatus,
   ApprovalRequest,
   Conversation,
@@ -34,11 +37,19 @@ export const IpcChannels = {
   TasksGet: "tasks:get",
   ActivityList: "activity:list",
   ApprovalsListPending: "approvals:listPending",
+  ApprovalsDecide: "approvals:decide",
   ConversationsList: "conversations:list",
   ConversationsCreate: "conversations:create",
   ConversationsGet: "conversations:get",
   MessagesSend: "messages:send",
   AiGetStatus: "ai:getStatus",
+  AgentGetStatus: "agent:getStatus",
+  AgentStart: "agent:start",
+  AgentStop: "agent:stop",
+  AgentEmergencyStop: "agent:emergencyStop",
+  AgentListActions: "agent:listActions",
+  AgentSubmitAction: "agent:submitAction",
+  AgentCancelAction: "agent:cancelAction",
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -70,6 +81,24 @@ export interface MessageSendInput {
   content: string;
 }
 
+export interface ApprovalsDecideInput {
+  approvalRequestId: string;
+  decision: "APPROVED" | "DENIED";
+}
+
+export interface AgentListActionsInput {
+  limit?: number;
+}
+
+export interface AgentSubmitActionInput {
+  actionType: AgentActionType;
+  parameters: Record<string, unknown>;
+}
+
+export interface AgentCancelActionInput {
+  actionId: string;
+}
+
 /** Request payload type for each IPC channel. `void` = no arguments. */
 export interface IpcRequestMap {
   [IpcChannels.SystemGetStatus]: void;
@@ -79,11 +108,19 @@ export interface IpcRequestMap {
   [IpcChannels.TasksGet]: TaskGetInput;
   [IpcChannels.ActivityList]: ActivityListInput | void;
   [IpcChannels.ApprovalsListPending]: void;
+  [IpcChannels.ApprovalsDecide]: ApprovalsDecideInput;
   [IpcChannels.ConversationsList]: void;
   [IpcChannels.ConversationsCreate]: ConversationCreateInput | void;
   [IpcChannels.ConversationsGet]: ConversationGetInput;
   [IpcChannels.MessagesSend]: MessageSendInput;
   [IpcChannels.AiGetStatus]: void;
+  [IpcChannels.AgentGetStatus]: void;
+  [IpcChannels.AgentStart]: void;
+  [IpcChannels.AgentStop]: void;
+  [IpcChannels.AgentEmergencyStop]: void;
+  [IpcChannels.AgentListActions]: AgentListActionsInput | void;
+  [IpcChannels.AgentSubmitAction]: AgentSubmitActionInput;
+  [IpcChannels.AgentCancelAction]: AgentCancelActionInput;
 }
 
 /** Response payload type for each IPC channel. */
@@ -95,11 +132,19 @@ export interface IpcResponseMap {
   [IpcChannels.TasksGet]: TaskDetail;
   [IpcChannels.ActivityList]: SystemEvent[];
   [IpcChannels.ApprovalsListPending]: ApprovalRequest[];
+  [IpcChannels.ApprovalsDecide]: ApprovalRequest;
   [IpcChannels.ConversationsList]: Conversation[];
   [IpcChannels.ConversationsCreate]: Conversation;
   [IpcChannels.ConversationsGet]: ConversationDetail;
   [IpcChannels.MessagesSend]: SendMessageResult;
   [IpcChannels.AiGetStatus]: AiStatus;
+  [IpcChannels.AgentGetStatus]: AgentStatusSnapshot;
+  [IpcChannels.AgentStart]: AgentStatusSnapshot;
+  [IpcChannels.AgentStop]: AgentStatusSnapshot;
+  [IpcChannels.AgentEmergencyStop]: AgentStatusSnapshot;
+  [IpcChannels.AgentListActions]: AgentAction[];
+  [IpcChannels.AgentSubmitAction]: AgentAction;
+  [IpcChannels.AgentCancelAction]: void;
 }
 
 /**
@@ -123,6 +168,7 @@ export interface NexusBridge {
   };
   approvals: {
     listPending: () => Promise<ApprovalRequest[]>;
+    decide: (input: ApprovalsDecideInput) => Promise<ApprovalRequest>;
   };
   conversations: {
     list: () => Promise<Conversation[]>;
@@ -134,5 +180,14 @@ export interface NexusBridge {
   };
   ai: {
     getStatus: () => Promise<AiStatus>;
+  };
+  agent: {
+    getStatus: () => Promise<AgentStatusSnapshot>;
+    start: () => Promise<AgentStatusSnapshot>;
+    stop: () => Promise<AgentStatusSnapshot>;
+    emergencyStop: () => Promise<AgentStatusSnapshot>;
+    listActions: (input?: AgentListActionsInput) => Promise<AgentAction[]>;
+    submitAction: (input: AgentSubmitActionInput) => Promise<AgentAction>;
+    cancelAction: (input: AgentCancelActionInput) => Promise<void>;
   };
 }

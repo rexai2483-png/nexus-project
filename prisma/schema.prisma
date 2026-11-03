@@ -127,39 +127,47 @@ model TaskStep {
   @@index([taskId])
 }
 
-/// An append-only log line produced while a task (or step) runs.
+/// An append-only log line produced while a task (or step) runs, or while
+/// the Windows Agent executes an action.
 model ExecutionLog {
-  id         String    @id @default(cuid())
-  taskId     String?
-  task       Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  taskStepId String?
-  taskStep   TaskStep? @relation(fields: [taskStepId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  taskId        String?
+  task          Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskStepId    String?
+  taskStep      TaskStep?    @relation(fields: [taskStepId], references: [id], onDelete: Cascade)
+  agentActionId String?
+  agentAction   AgentAction? @relation(fields: [agentActionId], references: [id], onDelete: Cascade)
   /// "DEBUG" | "INFO" | "WARN" | "ERROR"
-  level      String    @default("INFO")
-  message    String
-  createdAt  DateTime  @default(now())
+  level         String       @default("INFO")
+  message       String
+  createdAt     DateTime     @default(now())
 
   @@index([taskId, createdAt])
   @@index([taskStepId, createdAt])
+  @@index([agentActionId, createdAt])
 }
 
 /// A human-in-the-loop approval gate before NEXUS may proceed with a
 /// sensitive action. Nothing executes automatically without this record
-/// being resolved.
+/// being resolved. Approval always targets one exact action/step, never
+/// a whole task or session.
 model ApprovalRequest {
-  id          String    @id @default(cuid())
-  taskId      String?
-  task        Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  taskStepId  String?
-  taskStep    TaskStep? @relation(fields: [taskStepId], references: [id], onDelete: Cascade)
-  title       String
-  description String
+  id            String       @id @default(cuid())
+  taskId        String?
+  task          Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskStepId    String?
+  taskStep      TaskStep?    @relation(fields: [taskStepId], references: [id], onDelete: Cascade)
+  agentActionId String?
+  agentAction   AgentAction? @relation(fields: [agentActionId], references: [id], onDelete: Cascade)
+  title         String
+  description   String
   /// "PENDING" | "APPROVED" | "DENIED" | "EXPIRED"
-  status      String    @default("PENDING")
-  requestedAt DateTime  @default(now())
-  resolvedAt  DateTime?
+  status        String       @default("PENDING")
+  requestedAt   DateTime     @default(now())
+  resolvedAt    DateTime?
 
   @@index([status])
+  @@index([agentActionId])
 }
 
 /// A piece of durable context NEXUS has learned about the user or
@@ -176,18 +184,61 @@ model MemoryRecord {
   @@unique([type, key])
 }
 
-/// A single run of the agent loop (not implemented yet). Tasks may be
-/// attributed to the session that created them.
+/// A single run of the Windows Agent process, from `agent:start` to
+/// disconnect/stop. Tasks and individual agent actions are attributed to
+/// the session that created/ran them.
 model AgentSession {
-  id        String    @id @default(cuid())
-  /// "ACTIVE" | "IDLE" | "ENDED"
-  status    String    @default("ACTIVE")
-  startedAt DateTime  @default(now())
-  endedAt   DateTime?
+  id              String    @id @default(cuid())
+  /// "ACTIVE" | "IDLE" | "HALTED" | "ENDED"
+  status          String    @default("ACTIVE")
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  /// Set when an emergency STOP halted this session. A halted session
+  /// never accepts new actions again — a new session must be started.
+  haltedAt        DateTime?
+  lastHeartbeatAt DateTime?
 
-  tasks Task[]
+  tasks   Task[]
+  actions AgentAction[]
 
   @@index([status])
+}
+
+/// One explicitly submitted, validated Windows Agent action — the atomic
+/// unit of "controlled, observable automation". Every action the agent
+/// is ever asked to run gets a row here, whether it ends up executing,
+/// getting rejected by validation, awaiting approval, or being cancelled.
+model AgentAction {
+  id            String    @id @default(cuid())
+  sessionId     String
+  session       AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// One of the registered action types in shared/types/agentActions.ts
+  /// (e.g. "app.launch", "input.typeText", "fs.createFile").
+  type          String
+  /// JSON object of the parameters this specific invocation was submitted with.
+  parameters    Json
+  /// "LOW" | "ELEVATED" | "SENSITIVE"
+  permissionLevel String  @default("LOW")
+  requiresApproval Boolean @default(false)
+  /// "PENDING" | "AWAITING_APPROVAL" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "REJECTED"
+  status        String    @default("PENDING")
+  /// JSON result payload once the action completes successfully.
+  result        Json?
+  errorCode     String?
+  errorMessage  String?
+  /// Relative path (under the app's agent-data directory) of a screenshot
+  /// this action produced or that was captured to document it, if any.
+  screenshotPath String?
+  submittedAt   DateTime  @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+
+  approvalRequests ApprovalRequest[]
+  executionLogs    ExecutionLog[]
+
+  @@index([sessionId])
+  @@index([status])
+  @@index([submittedAt])
 }
 
 /// Append-only system/security event log surfaced in the Activity view.

@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { FloatingAssistant } from "./components/FloatingAssistant";
 import { Overview } from "./pages/Overview";
 import { Tasks } from "./pages/Tasks";
+import { Agent } from "./pages/Agent";
 import { Activity } from "./pages/Activity";
 import { Memory } from "./pages/Memory";
 import { Settings } from "./pages/Settings";
@@ -22,6 +23,7 @@ export default function App() {
     tasks: () => (
       <Tasks focusTaskId={focusTaskId} onFocusHandled={() => setFocusTaskId(null)} />
     ),
+    agent: Agent,
     activity: Activity,
     memory: Memory,
     settings: Settings,

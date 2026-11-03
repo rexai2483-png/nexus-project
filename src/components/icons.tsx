@@ -54,6 +54,17 @@ function MemoryIcon(props: IconProps) {
   );
 }
 
+function AgentIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="4" y="3" width="16" height="12" rx="2" />
+      <path d="M8 19h8M12 15v4" />
+      <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="9" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function SettingsIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -70,6 +81,7 @@ function SettingsIcon(props: IconProps) {
 export const NAV_ICONS: Record<NavKey, (props: IconProps) => JSX.Element> = {
   overview: OverviewIcon,
   tasks: TasksIcon,
+  agent: AgentIcon,
   activity: ActivityIcon,
   memory: MemoryIcon,
   settings: SettingsIcon,

@@ -1,4 +1,4 @@
-export type NavKey = "overview" | "tasks" | "activity" | "memory" | "settings";
+export type NavKey = "overview" | "tasks" | "agent" | "activity" | "memory" | "settings";
 
 export interface NavItem {
   key: NavKey;
@@ -8,6 +8,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { key: "overview", label: "Overview" },
   { key: "tasks", label: "Tasks" },
+  { key: "agent", label: "Agent" },
   { key: "activity", label: "Activity" },
   { key: "memory", label: "Memory" },
   { key: "settings", label: "Settings" },

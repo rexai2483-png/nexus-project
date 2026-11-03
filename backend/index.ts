@@ -2,6 +2,7 @@ import { prisma, disconnectDatabase, databaseUrl, migrationsDir } from "./db/cli
 import { applyPendingMigrations } from "./db/migrate";
 import { recordSystemEvent } from "./services/activityService";
 import { getAiStatus } from "./ai/providerFactory";
+import { shutdownAgent } from "./agent/agentManager";
 
 export * as settingsService from "./services/settingsService";
 export * as taskService from "./services/taskService";
@@ -9,6 +10,8 @@ export * as activityService from "./services/activityService";
 export * as approvalService from "./services/approvalService";
 export * as systemService from "./services/systemService";
 export * as conversationService from "./services/conversationService";
+export * as agentActionService from "./services/agentActionService";
+export * as agentManager from "./agent/agentManager";
 export { prisma, disconnectDatabase, getAiStatus };
 
 /**
@@ -30,6 +33,7 @@ export async function initBackend(): Promise<void> {
 
 export async function shutdownBackend(): Promise<void> {
   try {
+    shutdownAgent();
     await recordSystemEvent({
       type: "INFO",
       source: "APP",

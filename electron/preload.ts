@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ActivityListInput,
+  AgentCancelActionInput,
+  AgentListActionsInput,
+  AgentSubmitActionInput,
+  ApprovalsDecideInput,
   ConversationCreateInput,
   ConversationGetInput,
   IpcChannel,
@@ -37,11 +41,19 @@ const Channels = {
   TasksGet: "tasks:get",
   ActivityList: "activity:list",
   ApprovalsListPending: "approvals:listPending",
+  ApprovalsDecide: "approvals:decide",
   ConversationsList: "conversations:list",
   ConversationsCreate: "conversations:create",
   ConversationsGet: "conversations:get",
   MessagesSend: "messages:send",
   AiGetStatus: "ai:getStatus",
+  AgentGetStatus: "agent:getStatus",
+  AgentStart: "agent:start",
+  AgentStop: "agent:stop",
+  AgentEmergencyStop: "agent:emergencyStop",
+  AgentListActions: "agent:listActions",
+  AgentSubmitAction: "agent:submitAction",
+  AgentCancelAction: "agent:cancelAction",
 } as const satisfies Record<string, IpcChannel>;
 
 const nexusBridge: NexusBridge = {
@@ -63,6 +75,7 @@ const nexusBridge: NexusBridge = {
   },
   approvals: {
     listPending: () => ipcRenderer.invoke(Channels.ApprovalsListPending),
+    decide: (input: ApprovalsDecideInput) => ipcRenderer.invoke(Channels.ApprovalsDecide, input),
   },
   conversations: {
     list: () => ipcRenderer.invoke(Channels.ConversationsList),
@@ -75,6 +88,15 @@ const nexusBridge: NexusBridge = {
   },
   ai: {
     getStatus: () => ipcRenderer.invoke(Channels.AiGetStatus),
+  },
+  agent: {
+    getStatus: () => ipcRenderer.invoke(Channels.AgentGetStatus),
+    start: () => ipcRenderer.invoke(Channels.AgentStart),
+    stop: () => ipcRenderer.invoke(Channels.AgentStop),
+    emergencyStop: () => ipcRenderer.invoke(Channels.AgentEmergencyStop),
+    listActions: (input?: AgentListActionsInput) => ipcRenderer.invoke(Channels.AgentListActions, input),
+    submitAction: (input: AgentSubmitActionInput) => ipcRenderer.invoke(Channels.AgentSubmitAction, input),
+    cancelAction: (input: AgentCancelActionInput) => ipcRenderer.invoke(Channels.AgentCancelAction, input),
   },
 };
 

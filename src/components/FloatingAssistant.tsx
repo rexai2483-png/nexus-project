@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ChatMessage } from "./ChatMessage";
+import { EmergencyStopButton } from "./EmergencyStopButton";
 import type { AiStatus, Conversation, Message, Task } from "@shared/types/models";
 
 interface FloatingAssistantProps {
@@ -191,6 +192,7 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              <EmergencyStopButton compact />
               <button
                 type="button"
                 onClick={() => setShowHistory((value) => !value)}
