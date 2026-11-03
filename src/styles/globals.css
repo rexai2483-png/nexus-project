@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/*
+ * NEXUS design tokens.
+ * Dark, restrained palette: near-black surfaces, a single desaturated
+ * blue accent, and muted text tones. No gradients, no neon.
+ */
+@theme {
+  --color-nexus-bg: #0b0c0f;
+  --color-nexus-surface: #121317;
+  --color-nexus-surface-raised: #17191f;
+  --color-nexus-border: #24262e;
+  --color-nexus-text: #e6e7ea;
+  --color-nexus-text-muted: #8b8d97;
+  --color-nexus-text-faint: #5b5d66;
+  --color-nexus-accent: #5b8def;
+  --color-nexus-accent-muted: #2a3a56;
+  --color-nexus-success: #4caf7d;
+  --color-nexus-warning: #d9a441;
+  --color-nexus-danger: #e0616b;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-nexus-border) transparent;
+}

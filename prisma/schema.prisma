@@ -1,0 +1,256 @@
+// NEXUS — Prisma schema
+//
+// Local-only persistence for the desktop app. SQLite has no native enum
+// type, so fields that are conceptually enums are modeled as `String`
+// with a documented set of allowed values. The canonical list of values
+// for each one lives in shared/types/models.ts — keep the two in sync.
+//
+// This schema intentionally holds no secrets or API keys. Credentials
+// belong in the OS keychain / local env config, never in a DB row.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 moved connection URLs out of the schema file. The actual
+// SQLite file used by `prisma migrate` / `prisma studio` is configured
+// in prisma.config.ts (from DATABASE_URL). The running app instantiates
+// PrismaClient with an explicit driver adapter — see backend/db/client.ts.
+datasource db {
+  provider = "sqlite"
+}
+
+/// Local application settings. Singleton-ish: the app always reads/writes
+/// a single row (id = "default").
+model UserSettings {
+  id              String   @id @default("default")
+  /// "dark" | "light" | "system"
+  theme           String   @default("dark")
+  launchOnStartup Boolean  @default(false)
+  telemetryEnabled Boolean @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// A conversation thread between the user and NEXUS.
+model Conversation {
+  id        String    @id @default(cuid())
+  title     String    @default("New conversation")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+  tasks     Task[]
+
+  @@index([updatedAt])
+}
+
+/// A single message within a conversation.
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// "USER" | "ASSISTANT" | "SYSTEM"
+  role           String
+  content        String
+  /// The AI's classification behind an ASSISTANT reply.
+  /// "CONVERSATION" | "TASK" | "CLARIFICATION" | "SENSITIVE"
+  intent         String?
+  /// Set when this message proposed the linked task (never set because a
+  /// task was executed — NEXUS does not execute tasks yet).
+  taskId         String?
+  task           Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([taskId])
+}
+
+/// A unit of work the user has asked NEXUS to carry out. Execution is not
+/// implemented yet in this foundation — tasks only model structure.
+model Task {
+  id             String       @id @default(cuid())
+  title          String
+  description    String?
+  /// The user's original natural-language instruction that produced this task.
+  instruction    String?
+  /// The AI-determined objective — what success looks like.
+  objective      String?
+  /// JSON array of risk strings identified by the AI while planning.
+  risks              Json?
+  /// JSON array of applications/resources the AI identified as required.
+  requiredResources  Json?
+  /// Free-text description of how NEXUS would know the task is complete.
+  completionCriteria String?
+  /// True when the AI classified the originating instruction as a
+  /// potentially sensitive operation. Every step on a sensitive task
+  /// requires approval, regardless of what the AI proposed.
+  sensitive      Boolean      @default(false)
+  /// "PENDING" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELLED"
+  /// This sprint only ever produces "PENDING" (planned, not started) tasks.
+  status         String       @default("PENDING")
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  agentSessionId String?
+  agentSession   AgentSession? @relation(fields: [agentSessionId], references: [id])
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  steps             TaskStep[]
+  executionLogs     ExecutionLog[]
+  approvalRequests  ApprovalRequest[]
+  messages          Message[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([conversationId])
+}
+
+/// A single ordered step within a Task's plan.
+model TaskStep {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  order       Int
+  description String
+  /// Whether this step must be explicitly approved before NEXUS may act on
+  /// it in a future execution phase. Nothing executes in this sprint.
+  requiresApproval Boolean @default(false)
+  /// "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED"
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  executionLogs    ExecutionLog[]
+  approvalRequests ApprovalRequest[]
+
+  @@unique([taskId, order])
+  @@index([taskId])
+}
+
+/// An append-only log line produced while a task (or step) runs, or while
+/// the Windows Agent executes an action.
+model ExecutionLog {
+  id            String       @id @default(cuid())
+  taskId        String?
+  task          Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskStepId    String?
+  taskStep      TaskStep?    @relation(fields: [taskStepId], references: [id], onDelete: Cascade)
+  agentActionId String?
+  agentAction   AgentAction? @relation(fields: [agentActionId], references: [id], onDelete: Cascade)
+  /// "DEBUG" | "INFO" | "WARN" | "ERROR"
+  level         String       @default("INFO")
+  message       String
+  createdAt     DateTime     @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([taskStepId, createdAt])
+  @@index([agentActionId, createdAt])
+}
+
+/// A human-in-the-loop approval gate before NEXUS may proceed with a
+/// sensitive action. Nothing executes automatically without this record
+/// being resolved. Approval always targets one exact action/step, never
+/// a whole task or session.
+model ApprovalRequest {
+  id            String       @id @default(cuid())
+  taskId        String?
+  task          Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskStepId    String?
+  taskStep      TaskStep?    @relation(fields: [taskStepId], references: [id], onDelete: Cascade)
+  agentActionId String?
+  agentAction   AgentAction? @relation(fields: [agentActionId], references: [id], onDelete: Cascade)
+  title         String
+  description   String
+  /// "PENDING" | "APPROVED" | "DENIED" | "EXPIRED"
+  status        String       @default("PENDING")
+  requestedAt   DateTime     @default(now())
+  resolvedAt    DateTime?
+
+  @@index([status])
+  @@index([agentActionId])
+}
+
+/// A piece of durable context NEXUS has learned about the user or
+/// environment. Not populated by this foundation — structure only.
+model MemoryRecord {
+  id        String   @id @default(cuid())
+  /// "FACT" | "PREFERENCE" | "CONTEXT" | "SKILL"
+  type      String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([type, key])
+}
+
+/// A single run of the Windows Agent process, from `agent:start` to
+/// disconnect/stop. Tasks and individual agent actions are attributed to
+/// the session that created/ran them.
+model AgentSession {
+  id              String    @id @default(cuid())
+  /// "ACTIVE" | "IDLE" | "HALTED" | "ENDED"
+  status          String    @default("ACTIVE")
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  /// Set when an emergency STOP halted this session. A halted session
+  /// never accepts new actions again — a new session must be started.
+  haltedAt        DateTime?
+  lastHeartbeatAt DateTime?
+
+  tasks   Task[]
+  actions AgentAction[]
+
+  @@index([status])
+}
+
+/// One explicitly submitted, validated Windows Agent action — the atomic
+/// unit of "controlled, observable automation". Every action the agent
+/// is ever asked to run gets a row here, whether it ends up executing,
+/// getting rejected by validation, awaiting approval, or being cancelled.
+model AgentAction {
+  id            String    @id @default(cuid())
+  sessionId     String
+  session       AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// One of the registered action types in shared/types/agentActions.ts
+  /// (e.g. "app.launch", "input.typeText", "fs.createFile").
+  type          String
+  /// JSON object of the parameters this specific invocation was submitted with.
+  parameters    Json
+  /// "LOW" | "ELEVATED" | "SENSITIVE"
+  permissionLevel String  @default("LOW")
+  requiresApproval Boolean @default(false)
+  /// "PENDING" | "AWAITING_APPROVAL" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "REJECTED"
+  status        String    @default("PENDING")
+  /// JSON result payload once the action completes successfully.
+  result        Json?
+  errorCode     String?
+  errorMessage  String?
+  /// Relative path (under the app's agent-data directory) of a screenshot
+  /// this action produced or that was captured to document it, if any.
+  screenshotPath String?
+  submittedAt   DateTime  @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+
+  approvalRequests ApprovalRequest[]
+  executionLogs    ExecutionLog[]
+
+  @@index([sessionId])
+  @@index([status])
+  @@index([submittedAt])
+}
+
+/// Append-only system/security event log surfaced in the Activity view.
+model SystemEvent {
+  id        String   @id @default(cuid())
+  /// "INFO" | "WARNING" | "ERROR" | "SECURITY"
+  type      String   @default("INFO")
+  /// "APP" | "DATABASE" | "IPC" | "TASK" | "AGENT"
+  source    String   @default("APP")
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([type])
+}
