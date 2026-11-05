@@ -4,6 +4,7 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { TaskDetailView } from "../components/TaskDetailView";
 import { useNexusQuery } from "../hooks/useNexusQuery";
+import { requireNexusBridge } from "../lib/nexusBridge";
 import { TASK_STATUS_LABEL } from "../lib/taskLabels";
 import type { TaskDetail } from "@shared/types/models";
 
@@ -14,7 +15,7 @@ interface TasksProps {
 }
 
 export function Tasks({ focusTaskId, onFocusHandled }: TasksProps) {
-  const tasksQuery = useNexusQuery(() => window.nexus.tasks.list(), []);
+  const tasksQuery = useNexusQuery(() => requireNexusBridge().tasks.list(), []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -45,8 +46,11 @@ export function Tasks({ focusTaskId, onFocusHandled }: TasksProps) {
     let cancelled = false;
     setDetailLoading(true);
     setDetailError(null);
-    window.nexus.tasks
-      .get({ taskId: selectedId })
+    // Same reasoning as useNexusQuery.ts: go through a resolved-promise
+    // chain so a missing bridge (requireNexusBridge() throwing) lands in
+    // `.catch()` below instead of escaping this effect uncaught.
+    Promise.resolve()
+      .then(() => requireNexusBridge().tasks.get({ taskId: selectedId }))
       .then((loaded) => {
         if (!cancelled) setDetail(loaded);
       })
@@ -77,6 +81,7 @@ export function Tasks({ focusTaskId, onFocusHandled }: TasksProps) {
       ) : tasksQuery.error ? (
         <Card>
           <p className="text-sm text-nexus-danger">Unable to load tasks.</p>
+          <p className="mt-1 text-xs text-nexus-text-muted">{tasksQuery.error}</p>
         </Card>
       ) : tasksQuery.data && tasksQuery.data.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">

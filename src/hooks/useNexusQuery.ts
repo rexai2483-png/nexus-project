@@ -22,7 +22,14 @@ export function useNexusQuery<T>(fetcher: () => Promise<T>, deps: unknown[] = []
     let cancelled = false;
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
-    fetcher()
+    // `fetcher()` is wrapped inside a resolved promise chain, not called
+    // directly, so a fetcher that throws SYNCHRONOUSLY (for example,
+    // `window.nexus` being undefined because the Electron preload bridge
+    // never ran — see src/lib/nexusBridge.ts) still lands in the `.catch()`
+    // below instead of escaping as an uncaught exception inside this
+    // effect, which would otherwise crash the whole React tree.
+    Promise.resolve()
+      .then(() => fetcher())
       .then((data) => {
         if (!cancelled) setState({ data, loading: false, error: null });
       })
