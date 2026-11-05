@@ -292,7 +292,20 @@ npm run dev
 
 This starts the Vite dev server (renderer, port 5173), compiles
 `electron/`, `backend/`, and `shared/` with `tsc --watch`, and launches
-Electron once both are ready. DevTools open automatically.
+Electron once both are ready. DevTools open automatically. Using `pnpm`
+instead of `npm`? Run `pnpm dev` — it's the same script (`concurrently`
+with `npm:`-prefixed sub-commands), it just needs to be invoked through
+`pnpm` so those sub-commands resolve with the right package manager too.
+
+> **Do not run `npm run dev:renderer` (or `pnpm dev:renderer`) on its own
+> expecting the full app.** That script only starts the Vite dev server —
+> there is no Electron process, no preload bridge, and no backend behind
+> it, so `window.nexus` (everything Tasks/Agent/Settings/the assistant
+> call) is genuinely `undefined`. NEXUS detects this and shows a
+> "Renderer-only preview" banner plus a clear per-page error instead of
+> crashing, but no real data will ever load that way — it's only useful
+> for iterating on layout/styling. Always use `npm run dev` / `pnpm dev`
+> (or a full `npm run build && npm start`) to get a working app.
 
 ### Type-check
 
