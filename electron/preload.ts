@@ -11,6 +11,7 @@ import type {
   MessageSendInput,
   NexusBridge,
   SettingsUpdateInput,
+  SystemSetAlwaysOnTopInput,
   TaskGetInput,
 } from "../shared/types/ipc";
 
@@ -35,6 +36,7 @@ import type {
  */
 const Channels = {
   SystemGetStatus: "system:getStatus",
+  SystemSetAlwaysOnTop: "system:setAlwaysOnTop",
   SettingsGet: "settings:get",
   SettingsUpdate: "settings:update",
   TasksList: "tasks:list",
@@ -54,11 +56,14 @@ const Channels = {
   AgentListActions: "agent:listActions",
   AgentSubmitAction: "agent:submitAction",
   AgentCancelAction: "agent:cancelAction",
+  MemoryList: "memory:list",
 } as const satisfies Record<string, IpcChannel>;
 
 const nexusBridge: NexusBridge = {
   system: {
     getStatus: () => ipcRenderer.invoke(Channels.SystemGetStatus),
+    setAlwaysOnTop: (input: SystemSetAlwaysOnTopInput) =>
+      ipcRenderer.invoke(Channels.SystemSetAlwaysOnTop, input),
   },
   settings: {
     get: () => ipcRenderer.invoke(Channels.SettingsGet),
@@ -97,6 +102,9 @@ const nexusBridge: NexusBridge = {
     listActions: (input?: AgentListActionsInput) => ipcRenderer.invoke(Channels.AgentListActions, input),
     submitAction: (input: AgentSubmitActionInput) => ipcRenderer.invoke(Channels.AgentSubmitAction, input),
     cancelAction: (input: AgentCancelActionInput) => ipcRenderer.invoke(Channels.AgentCancelAction, input),
+  },
+  memory: {
+    list: () => ipcRenderer.invoke(Channels.MemoryList),
   },
 };
 

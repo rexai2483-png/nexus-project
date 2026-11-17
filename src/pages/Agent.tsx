@@ -4,6 +4,7 @@ import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusDot } from "../components/StatusDot";
 import { EmergencyStopButton } from "../components/EmergencyStopButton";
+import { isPreviewModeActive } from "../lib/nexusBridge";
 import { APPROVED_APPLICATIONS, APPROVED_SHORTCUTS } from "@shared/types/agentApprovedApps";
 import type { AgentActionType } from "@shared/types/agentActions";
 import type { AgentAction, AgentStatusSnapshot, ApprovalRequest } from "@shared/types/models";
@@ -25,6 +26,7 @@ function resultSummary(action: AgentAction): string {
 }
 
 export function Agent() {
+  const previewMode = isPreviewModeActive();
   const [status, setStatus] = useState<AgentStatusSnapshot | null>(null);
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
@@ -86,7 +88,11 @@ export function Agent() {
     <div>
       <PageHeader
         title="Windows Agent"
-        description="Controlled, validated automation — every action below is explicitly submitted and runs through the same approval and registry checks NEXUS enforces for real."
+        description={
+          previewMode
+            ? "Preview Mode — this page is wired to a local simulation of the Windows Agent. Actions below run the same validation and approval rules as the real agent, but nothing reaches a real computer."
+            : "Controlled, validated automation — every action below is explicitly submitted and runs through the same approval and registry checks NEXUS enforces for real."
+        }
         action={<EmergencyStopButton onStopped={() => void refresh()} />}
       />
 
@@ -128,7 +134,7 @@ export function Agent() {
         {error ? <p className="mt-3 text-xs text-nexus-danger">{error}</p> : null}
       </Card>
 
-      <Card title="Quick actions" subtitle="Each button submits one explicit, validated action — matching the sprint's required test scenarios." className="mb-4">
+      <Card title="Quick actions" subtitle="Each button submits one explicit, validated action." className="mb-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-2 rounded-md border border-nexus-border p-3">
             <p className="text-xs font-medium text-nexus-text">App management</p>
@@ -325,7 +331,10 @@ export function Agent() {
         )}
       </Card>
 
-      <Card title="Recent actions" subtitle="Real execution results — nothing here is simulated.">
+      <Card
+        title="Recent actions"
+        subtitle={previewMode ? "Simulated results — Preview Mode, nothing here touched a real computer." : "Real execution results — nothing here is simulated."}
+      >
         {loading ? (
           <p className="text-sm text-nexus-text-faint">Loading…</p>
         ) : actions.length === 0 ? (

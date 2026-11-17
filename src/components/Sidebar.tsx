@@ -4,17 +4,25 @@ import { NAV_ICONS } from "./icons";
 interface SidebarProps {
   active: NavKey;
   onSelect: (key: NavKey) => void;
+  previewMode?: boolean;
 }
 
-export function Sidebar({ active, onSelect }: SidebarProps) {
+export function Sidebar({ active, onSelect, previewMode }: SidebarProps) {
   return (
     <aside className="flex h-full w-60 flex-col border-r border-nexus-border bg-nexus-surface">
       <div className="flex items-center gap-2 px-5 py-5">
         <div className="flex h-7 w-7 items-center justify-center rounded-md bg-nexus-accent/15 text-nexus-accent">
           <span className="text-[13px] font-semibold">N</span>
         </div>
-        <div className="leading-tight">
-          <p className="text-sm font-semibold tracking-wide text-nexus-text">NEXUS</p>
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-semibold tracking-wide text-nexus-text">NEXUS</p>
+            {previewMode ? (
+              <span className="rounded border border-nexus-warning/40 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-nexus-warning">
+                Preview
+              </span>
+            ) : null}
+          </div>
           <p className="text-[11px] text-nexus-text-faint">AI Computer Operator</p>
         </div>
       </div>

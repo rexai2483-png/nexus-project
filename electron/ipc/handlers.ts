@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { BrowserWindow, ipcMain } from "electron";
 import { IpcChannels } from "../../shared/types/ipc";
 import {
   settingsService,
@@ -8,6 +8,7 @@ import {
   systemService,
   conversationService,
   agentManager,
+  memoryService,
   getAiStatus,
 } from "../../backend";
 
@@ -21,6 +22,16 @@ import {
  */
 export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.SystemGetStatus, () => systemService.getSystemStatus());
+
+  // Pins/unpins whichever window actually sent the request — there is
+  // only ever one NEXUS window today, but resolving it from the event's
+  // sender (rather than a module-level reference) keeps this handler
+  // correct if that ever changes.
+  ipcMain.handle(IpcChannels.SystemSetAlwaysOnTop, (event, input) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    win?.setAlwaysOnTop(input.enabled);
+    return { enabled: win?.isAlwaysOnTop() ?? false };
+  });
 
   ipcMain.handle(IpcChannels.SettingsGet, () => settingsService.getSettings());
 
@@ -79,4 +90,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IpcChannels.AgentCancelAction, (_event, input) =>
     agentManager.cancelAction(input.actionId),
   );
+
+  ipcMain.handle(IpcChannels.MemoryList, () => memoryService.listMemoryRecords());
 }

@@ -10,17 +10,23 @@ declare global {
      *
      * Typed as always-present because that is the real contract once
      * NEXUS is launched correctly (the full Electron app — preload
-     * runs before the renderer ever loads). It is NOT present when the
-     * renderer is served on its own (`npm run dev:renderer` / `pnpm
-     * dev:renderer` without the rest of `npm run dev`) — there is no
-     * Electron process and nothing ever calls
-     * `contextBridge.exposeInMainWorld`. Code that might run in that
-     * renderer-only mode (any component mounted unconditionally, e.g.
-     * on first paint) must go through
+     * runs before the renderer ever loads). It is NOT injected by
+     * Electron when the renderer is served on its own (`npm run
+     * dev:renderer` / `pnpm dev:renderer` without the rest of `npm run
+     * dev`) — there is no Electron process and nothing ever calls
+     * `contextBridge.exposeInMainWorld`. In that case, in a dev build
+     * only, `src/lib/nexusBridge.ts` installs a mock implementing this
+     * exact interface instead (NEXUS's browser Preview Mode) — so by
+     * the time any component renders, `window.nexus` is either the
+     * real bridge or that mock, never actually `undefined`, in both
+     * dev and production. Code that runs before that install is
+     * guaranteed to have happened (which is effectively none — see
+     * nexusBridge.ts) should still prefer
      * `src/lib/nexusBridge.ts#requireNexusBridge()` /
-     * `isNexusBridgeAvailable()` instead of reading `window.nexus`
-     * directly, so a missing bridge produces a clear, actionable error
-     * instead of a raw `Cannot read properties of undefined`.
+     * `isNexusBridgeAvailable()` over reading `window.nexus` directly,
+     * so the one remaining failure case (a production build with no
+     * Electron preload) produces a clear, actionable error instead of
+     * a raw `Cannot read properties of undefined`.
      */
     nexus: NexusBridge;
   }

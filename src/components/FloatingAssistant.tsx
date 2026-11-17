@@ -1,21 +1,108 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { EmergencyStopButton } from "./EmergencyStopButton";
-import type { AiStatus, Conversation, Message, Task } from "@shared/types/models";
+import { isPreviewModeActive } from "../lib/nexusBridge";
+import type { AiStatus, Conversation, Message, Task, TaskDetail } from "@shared/types/models";
 
 interface FloatingAssistantProps {
   /** Lets the panel hand off to the Tasks page when a proposed task is opened. */
   onViewTask: (taskId: string) => void;
 }
 
+const POSITION_STORAGE_KEY = "nexus.assistant.position";
+const DEFAULT_POSITION = { right: 24, bottom: 24 };
+const TASK_POLL_INTERVAL_MS = 4000;
+
+interface Position {
+  right: number;
+  bottom: number;
+}
+
+function loadStoredPosition(): Position {
+  try {
+    const raw = localStorage.getItem(POSITION_STORAGE_KEY);
+    if (!raw) return DEFAULT_POSITION;
+    const parsed = JSON.parse(raw) as Partial<Position>;
+    if (typeof parsed.right === "number" && typeof parsed.bottom === "number") {
+      return { right: parsed.right, bottom: parsed.bottom };
+    }
+  } catch {
+    // Corrupt/unavailable storage — fall back to the default corner.
+  }
+  return DEFAULT_POSITION;
+}
+
 /**
- * The conversation surface for NEXUS. Minimal and unobtrusive when
- * closed (see the launcher button at the bottom), a real chat panel
- * when open: persistent conversations, context-aware replies, explicit
- * loading/error states, and a clear visual distinction between a plain
- * reply and a proposed task. Nothing in here claims a task has run.
+ * Minimal drag-to-reposition behavior for the whole widget (icon, working
+ * pill, or expanded panel — whichever is currently rendered). Position is
+ * stored as distance from the bottom-right corner so it stays pinned to
+ * the same corner across window resizes, and persisted locally so the
+ * assistant reopens where the user left it.
+ */
+function useDraggablePosition() {
+  const [position, setPosition] = useState<Position>(() => loadStoredPosition());
+  const dragState = useRef<{ startX: number; startY: number; origin: Position } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      // Only the primary button/touch starts a drag; avoid hijacking
+      // interactions with buttons/inputs inside the handle.
+      if (event.button !== 0) return;
+      dragState.current = { startX: event.clientX, startY: event.clientY, origin: position };
+      (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
+    },
+    [position],
+  );
+
+  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (!dragState.current) return;
+    const { startX, startY, origin } = dragState.current;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (!dragging && Math.hypot(dx, dy) > 3) setDragging(true);
+
+    const next: Position = {
+      right: Math.max(8, Math.min(window.innerWidth - 60, origin.right - dx)),
+      bottom: Math.max(8, Math.min(window.innerHeight - 40, origin.bottom - dy)),
+    };
+    setPosition(next);
+  }, [dragging]);
+
+  const onPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (!dragState.current) return;
+      dragState.current = null;
+      (event.target as HTMLElement).releasePointerCapture?.(event.pointerId);
+      setPosition((current) => {
+        try {
+          localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(current));
+        } catch {
+          // Best effort only.
+        }
+        return current;
+      });
+      // Defer clearing `dragging` so the click handler that fires right
+      // after pointerup can check it and suppress an accidental toggle.
+      setTimeout(() => setDragging(false), 0);
+    },
+    [],
+  );
+
+  return { position, dragging, dragHandleProps: { onPointerDown, onPointerMove, onPointerUp } };
+}
+
+/**
+ * The conversation surface for NEXUS. Three states: a compact floating
+ * icon when idle, a "working" pill when a task is actively running, and
+ * a full chat/command panel when expanded. Minimal and unobtrusive when
+ * closed, a real chat panel when open: persistent conversations,
+ * context-aware replies, explicit loading/error states, and a clear
+ * visual distinction between a plain reply and a proposed task. Nothing
+ * in here claims a task has run for real.
  */
 export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
+  const previewMode = isPreviewModeActive();
   const [open, setOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
@@ -28,7 +115,58 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
   const [sendError, setSendError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [activeTask, setActiveTask] = useState<TaskDetail | null>(null);
+  const [workingDismissed, setWorkingDismissed] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const { position, dragging, dragHandleProps } = useDraggablePosition();
+
+  // Poll for a RUNNING task regardless of whether the panel is open, so
+  // the "working" state can appear even while collapsed. Tasks never
+  // execute autonomously in NEXUS today, so in practice this only ever
+  // lights up from Preview Mode's simulated sample task — see
+  // src/preview/mockData.ts — but the real path is the same `tasks.list`
+  // / `tasks.get` calls the Tasks page uses, so it is ready the moment
+  // real execution exists.
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const list = await window.nexus.tasks.list();
+        if (cancelled) return;
+        const running: Task | undefined = list.find((t) => t.status === "RUNNING");
+        if (!running) {
+          setActiveTask(null);
+          return;
+        }
+        const detail = await window.nexus.tasks.get({ taskId: running.id });
+        if (cancelled) return;
+        setActiveTask((prev) => {
+          if (detail.id !== prev?.id) setWorkingDismissed(false);
+          return detail;
+        });
+      } catch {
+        // Silent — the chat panel surfaces load errors when opened; this
+        // background poll shouldn't interrupt whatever page is showing.
+      }
+    }
+    void poll();
+    const interval = setInterval(() => void poll(), TASK_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Let other parts of the dashboard (e.g. Overview's "Ask NEXUS" quick
+  // action) open the assistant without App.tsx having to lift state.
+  useEffect(() => {
+    function handleOpenRequest() {
+      setOpen(true);
+    }
+    window.addEventListener("nexus:open-assistant", handleOpenRequest);
+    return () => window.removeEventListener("nexus:open-assistant", handleOpenRequest);
+  }, []);
 
   async function selectConversation(conversationId: string) {
     setActiveConversationId(conversationId);
@@ -172,13 +310,43 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
     }
   }
 
+  async function toggleAlwaysOnTop() {
+    try {
+      const result = await window.nexus.system.setAlwaysOnTop({ enabled: !alwaysOnTop });
+      setAlwaysOnTop(result.enabled);
+    } catch {
+      // Best effort — Electron-only, and never critical to anything else here.
+    }
+  }
+
+  function openFromWorking() {
+    if (dragging) return;
+    setOpen(true);
+    if (activeTask) onViewTask(activeTask.id);
+  }
+
   const activeConversation = conversations.find((c) => c.id === activeConversationId) ?? null;
+  const widgetStyle = { right: position.right, bottom: position.bottom };
+  const showWorkingPill = !open && activeTask && !workingDismissed;
+  const runningStepIndex = activeTask?.steps.findIndex((s) => s.status === "RUNNING") ?? -1;
+  const completedStepCount = activeTask?.steps.filter((s) => s.status === "COMPLETED").length ?? 0;
+  const currentStepNumber = activeTask
+    ? runningStepIndex >= 0
+      ? runningStepIndex + 1
+      : Math.min(completedStepCount + 1, activeTask.steps.length)
+    : 0;
 
   return (
-    <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
+    <div
+      className="pointer-events-none fixed z-50 flex flex-col items-end gap-2"
+      style={widgetStyle}
+    >
       {open ? (
         <div className="pointer-events-auto flex h-[560px] w-96 max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-lg border border-nexus-border bg-nexus-surface-raised shadow-xl shadow-black/30">
-          <div className="flex items-center justify-between gap-2 border-b border-nexus-border px-4 py-3">
+          <div
+            className="flex cursor-grab items-center justify-between gap-2 border-b border-nexus-border px-4 py-3 active:cursor-grabbing"
+            {...dragHandleProps}
+          >
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-nexus-text">
                 {activeConversation?.title ?? "Assistant"}
@@ -193,6 +361,28 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <EmergencyStopButton compact />
+              <button
+                type="button"
+                onClick={() => void toggleAlwaysOnTop()}
+                disabled={previewMode}
+                title={
+                  previewMode
+                    ? "Always-on-top is only available in the desktop app, not in browser Preview Mode."
+                    : alwaysOnTop
+                      ? "Stop keeping NEXUS above other windows"
+                      : "Keep NEXUS above other windows"
+                }
+                aria-pressed={alwaysOnTop}
+                aria-label="Toggle always-on-top"
+                className={[
+                  "rounded px-2 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-30",
+                  alwaysOnTop
+                    ? "text-nexus-accent"
+                    : "text-nexus-text-muted hover:bg-nexus-surface hover:text-nexus-text",
+                ].join(" ")}
+              >
+                📌
+              </button>
               <button
                 type="button"
                 onClick={() => setShowHistory((value) => !value)}
@@ -219,6 +409,20 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
               </button>
             </div>
           </div>
+
+          {activeTask ? (
+            <button
+              type="button"
+              onClick={() => onViewTask(activeTask.id)}
+              className="flex w-full items-center justify-between gap-2 border-b border-nexus-border bg-nexus-accent-muted/40 px-4 py-2 text-left text-[11px] text-nexus-text transition-colors hover:bg-nexus-accent-muted/60"
+            >
+              <span className="flex items-center gap-2 truncate">
+                <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-nexus-accent" />
+                <span className="truncate">Working: {activeTask.title}</span>
+              </span>
+              <span className="shrink-0 text-nexus-text-faint">View →</span>
+            </button>
+          ) : null}
 
           {showHistory ? (
             <div className="max-h-40 overflow-y-auto border-b border-nexus-border">
@@ -309,16 +513,48 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
             </div>
           </div>
         </div>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-label="NEXUS assistant"
-        className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-nexus-border bg-nexus-surface-raised text-nexus-text-muted shadow-md shadow-black/30 transition-colors hover:text-nexus-accent"
-      >
-        <span className="text-sm font-semibold">N</span>
-      </button>
+      ) : showWorkingPill && activeTask ? (
+        <div
+          className="pointer-events-auto flex max-w-[280px] items-center gap-2 rounded-full border border-nexus-border bg-nexus-surface-raised px-3 py-2 shadow-md shadow-black/30"
+          {...dragHandleProps}
+        >
+          <button
+            type="button"
+            onClick={openFromWorking}
+            className="flex min-w-0 items-center gap-2 text-left"
+          >
+            <span className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-nexus-accent/15 text-nexus-accent">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-nexus-accent" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-xs font-medium text-nexus-text">{activeTask.title}</span>
+              <span className="block text-[10px] text-nexus-text-faint">
+                Working · step {currentStepNumber} of {activeTask.steps.length}
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setWorkingDismissed(true)}
+            aria-label="Dismiss"
+            className="shrink-0 rounded px-1 text-xs text-nexus-text-faint hover:text-nexus-text"
+          >
+            ×
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            if (!dragging) setOpen((prev) => !prev);
+          }}
+          aria-label="NEXUS assistant"
+          className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full border border-nexus-border bg-nexus-surface-raised text-nexus-text-muted shadow-md shadow-black/30 transition-colors hover:text-nexus-accent"
+          {...dragHandleProps}
+        >
+          <span className="text-sm font-semibold">N</span>
+        </button>
+      )}
     </div>
   );
 }

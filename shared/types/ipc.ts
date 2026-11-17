@@ -21,6 +21,7 @@ import type {
   ApprovalRequest,
   Conversation,
   ConversationDetail,
+  MemoryRecord,
   SendMessageResult,
   SystemEvent,
   SystemStatus,
@@ -31,6 +32,7 @@ import type {
 
 export const IpcChannels = {
   SystemGetStatus: "system:getStatus",
+  SystemSetAlwaysOnTop: "system:setAlwaysOnTop",
   SettingsGet: "settings:get",
   SettingsUpdate: "settings:update",
   TasksList: "tasks:list",
@@ -50,9 +52,18 @@ export const IpcChannels = {
   AgentListActions: "agent:listActions",
   AgentSubmitAction: "agent:submitAction",
   AgentCancelAction: "agent:cancelAction",
+  MemoryList: "memory:list",
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
+
+export interface SystemSetAlwaysOnTopInput {
+  enabled: boolean;
+}
+
+export interface SystemAlwaysOnTopResult {
+  enabled: boolean;
+}
 
 export interface SettingsUpdateInput {
   theme?: UserSettings["theme"];
@@ -102,6 +113,7 @@ export interface AgentCancelActionInput {
 /** Request payload type for each IPC channel. `void` = no arguments. */
 export interface IpcRequestMap {
   [IpcChannels.SystemGetStatus]: void;
+  [IpcChannels.SystemSetAlwaysOnTop]: SystemSetAlwaysOnTopInput;
   [IpcChannels.SettingsGet]: void;
   [IpcChannels.SettingsUpdate]: SettingsUpdateInput;
   [IpcChannels.TasksList]: void;
@@ -121,11 +133,13 @@ export interface IpcRequestMap {
   [IpcChannels.AgentListActions]: AgentListActionsInput | void;
   [IpcChannels.AgentSubmitAction]: AgentSubmitActionInput;
   [IpcChannels.AgentCancelAction]: AgentCancelActionInput;
+  [IpcChannels.MemoryList]: void;
 }
 
 /** Response payload type for each IPC channel. */
 export interface IpcResponseMap {
   [IpcChannels.SystemGetStatus]: SystemStatus;
+  [IpcChannels.SystemSetAlwaysOnTop]: SystemAlwaysOnTopResult;
   [IpcChannels.SettingsGet]: UserSettings;
   [IpcChannels.SettingsUpdate]: UserSettings;
   [IpcChannels.TasksList]: Task[];
@@ -145,6 +159,7 @@ export interface IpcResponseMap {
   [IpcChannels.AgentListActions]: AgentAction[];
   [IpcChannels.AgentSubmitAction]: AgentAction;
   [IpcChannels.AgentCancelAction]: void;
+  [IpcChannels.MemoryList]: MemoryRecord[];
 }
 
 /**
@@ -154,6 +169,8 @@ export interface IpcResponseMap {
 export interface NexusBridge {
   system: {
     getStatus: () => Promise<SystemStatus>;
+    /** Electron-only: pins/unpins the main window above other windows. */
+    setAlwaysOnTop: (input: SystemSetAlwaysOnTopInput) => Promise<SystemAlwaysOnTopResult>;
   };
   settings: {
     get: () => Promise<UserSettings>;
@@ -189,5 +206,8 @@ export interface NexusBridge {
     listActions: (input?: AgentListActionsInput) => Promise<AgentAction[]>;
     submitAction: (input: AgentSubmitActionInput) => Promise<AgentAction>;
     cancelAction: (input: AgentCancelActionInput) => Promise<void>;
+  };
+  memory: {
+    list: () => Promise<MemoryRecord[]>;
   };
 }

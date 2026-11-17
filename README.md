@@ -85,10 +85,16 @@ shared/types/          Types shared by backend, renderer, AND the agent process
 
 src/                   React renderer (Vite root)
   components/          Sidebar, cards, empty states, task detail view, chat UI
-                        (FloatingAssistant, ChatMessage, TaskProposalCard,
-                        EmergencyStopButton)
+                        (FloatingAssistant — draggable, three visual states,
+                        optional Electron always-on-top — ChatMessage,
+                        TaskProposalCard, EmergencyStopButton,
+                        PreviewModeBanner)
   pages/                Overview, Tasks (master-detail plan viewer), Agent (Windows
                         Agent control panel), Activity, Memory, Settings
+  preview/              Browser Preview Mode's mock data + mock `NexusBridge`
+                        implementation — see "Browser Preview Mode" below
+  lib/nexusBridge.ts     Resolves the real Electron bridge or (dev-only) the
+                        Preview Mode mock — the one place that decides which
   App.tsx, main.tsx     App shell and entry point
 ```
 
@@ -143,7 +149,10 @@ indexes:
   action whose parameters/context require sign-off (e.g. overwriting a file).
   Approving or denying one always resolves that exact row — never a whole
   task or session.
-- `MemoryRecord` — durable context key/value store (not populated yet)
+- `MemoryRecord` — durable context key/value store. `memory:list` is wired up
+  (Memory Centre page), but nothing writes to this table yet, so a real run
+  still shows a real, currently-empty state — only Preview Mode's in-memory
+  mock populates it with sample records
 - `AgentSession` — one run of the Windows Agent process, from start to
   stop/halt/disconnect, with heartbeat tracking
 - `AgentAction` — one explicitly submitted, validated Windows Agent action —
@@ -265,6 +274,51 @@ It will print `NEXUS_AGENT_READY ...` once listening; connect with any
 newline-delimited-JSON socket client and send `{"type":"auth","token":"test-token"}`
 first.
 
+## Browser Preview Mode
+
+A development-only mode that makes the full visual experience explorable
+from the Vite dev server's browser URL, without Electron, a database, an AI
+key, or a Windows Agent.
+
+**How it activates.** `src/lib/nexusBridge.ts` installs a mock
+`NexusBridge` (`src/preview/mockBridge.ts`) onto `window.nexus` if, and only
+if, both are true: `import.meta.env.DEV` (a Vite production build hard-codes
+this to `false`, and the install call is unreachable dead code once that's
+folded — verified by inspecting the production bundle) and no real Electron
+preload bridge is already present (Electron always wins; this never
+overwrites a real bridge). Every page, the Tasks master-detail view, and the
+floating assistant call the exact same `window.nexus.*` methods either way —
+none of them know or care whether they're talking to Electron's IPC bridge or
+the mock, which is what makes the whole dashboard explorable unmodified.
+
+**What it looks like.** A persistent amber "PREVIEW MODE" banner spans the
+top of the window the entire time it's active (`PreviewModeBanner.tsx`) plus
+a small badge in the sidebar — it is never silent and never dismissible.
+
+**What it provides** (`src/preview/mockData.ts` + `mockBridge.ts`), all
+local, in-memory, and reset on reload:
+
+- Sample tasks across every status (planned, running with real per-step
+  progress, completed, failed, cancelled), including one sensitive task with
+  a pending approval
+- Sample activity events, approvals, a demo conversation, and memory records
+  across all four categories
+- A simple keyword-based conversation engine — not a real AI call — that can
+  propose new sample tasks or answer questions, so you can try sending
+  messages and creating tasks live
+- A simulated Windows Agent session: start/stop, submit quick actions
+  (reusing the exact same `AGENT_ACTION_CATALOG` / `requiresApprovalForInvocation`
+  rules as the real backend, so e.g. submitting an unapproved app ID fails
+  the same way), approval gating, and Emergency STOP
+- A preview-only memory management UI (add/delete records) in the Memory
+  Centre — gated behind Preview Mode and never part of the real
+  `NexusBridge` contract, so it can't be mistaken for a real persistence path
+
+**What it will never do:** claim a real application opened, a real file was
+created, or a real screenshot was taken — simulated action results are
+tagged `preview: true` and worded accordingly; call anything in `agent/` or
+`backend/`; or activate outside a dev build.
+
 ## Getting started
 
 ### Prerequisites
@@ -297,15 +351,14 @@ instead of `npm`? Run `pnpm dev` — it's the same script (`concurrently`
 with `npm:`-prefixed sub-commands), it just needs to be invoked through
 `pnpm` so those sub-commands resolve with the right package manager too.
 
-> **Do not run `npm run dev:renderer` (or `pnpm dev:renderer`) on its own
-> expecting the full app.** That script only starts the Vite dev server —
-> there is no Electron process, no preload bridge, and no backend behind
-> it, so `window.nexus` (everything Tasks/Agent/Settings/the assistant
-> call) is genuinely `undefined`. NEXUS detects this and shows a
-> "Renderer-only preview" banner plus a clear per-page error instead of
-> crashing, but no real data will ever load that way — it's only useful
-> for iterating on layout/styling. Always use `npm run dev` / `pnpm dev`
-> (or a full `npm run build && npm start`) to get a working app.
+> Running `npm run dev:renderer` (or `pnpm dev:renderer`) on its own starts
+> only the Vite dev server — no Electron process, no preload bridge, no real
+> backend. `window.nexus` is genuinely `undefined` there, so NEXUS
+> automatically activates **Browser Preview Mode**: a mock `NexusBridge`
+> backed by realistic sample data, so the entire dashboard is explorable and
+> interactive without Electron. See **Browser Preview Mode** below. For a
+> real backend (live AI, Windows Agent, database), use `npm run dev` /
+> `pnpm dev` (or a full `npm run build && npm start`) instead.
 
 ### Type-check
 
@@ -355,6 +408,15 @@ Implemented so far:
   agent actions: approving forwards the exact action for execution, denying
   marks it `REJECTED` — task-step approvals remain display-only pending a
   task execution engine
+- A polished, completed dashboard: Overview now surfaces agent/AI status and
+  quick actions, Settings now surfaces AI provider status, a read-only
+  permissions/catalog reference, and an agent-configuration summary, Memory
+  is wired to the real (currently-empty) `MemoryRecord` table with a
+  category-filtered master-detail UI, and Activity gained type filters
+- The floating assistant is draggable, persists its position, shows a
+  distinct "working" state with real per-step progress when a task is
+  running, and (in Electron only) can pin the NEXUS window always-on-top
+- Browser Preview Mode — see the dedicated section above
 
 Explicitly **not** implemented yet (by design, for a later phase):
 
@@ -366,9 +428,13 @@ Explicitly **not** implemented yet (by design, for a later phase):
 - Autonomous *task* execution — a `Task`'s steps are still "planned, not
   started"; only the separate, explicit Agent-page quick actions actually run
 
-The dashboard reflects this honestly: Memory still shows a real, currently-empty
+The dashboard reflects this honestly: when running against the real backend
+(`npm run dev` / `npm start`), Memory still shows a real, currently-empty
 state, and nothing in Tasks, Agent, or Activity is simulated — it is exactly
-what's in the local database and what the agent actually reported.
+what's in the local database and what the agent actually reported. The one
+exception is Browser Preview Mode (`npm run dev:renderer` alone), which is
+clearly and persistently labeled as such and never shares a code path with
+the real Electron bridge — see **Browser Preview Mode** above.
 
 ## Known limitations (Windows Agent)
 

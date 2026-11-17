@@ -84,7 +84,19 @@ export function Tasks({ focusTaskId, onFocusHandled }: TasksProps) {
           <p className="mt-1 text-xs text-nexus-text-muted">{tasksQuery.error}</p>
         </Card>
       ) : tasksQuery.data && tasksQuery.data.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
+        <>
+          <div className="mb-4 flex flex-wrap gap-4 text-xs text-nexus-text-faint">
+            {(["PENDING", "RUNNING", "COMPLETED", "FAILED"] as const).map((status) => {
+              const count = tasksQuery.data!.filter((t) => t.status === status).length;
+              if (count === 0) return null;
+              return (
+                <span key={status}>
+                  <span className="font-medium text-nexus-text">{count}</span> {TASK_STATUS_LABEL[status].toLowerCase()}
+                </span>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
           <Card className="p-0">
             <ul className="divide-y divide-nexus-border">
               {tasksQuery.data.map((task) => {
@@ -129,7 +141,8 @@ export function Tasks({ focusTaskId, onFocusHandled }: TasksProps) {
               <EmptyState title="Select a task" description="Choose a task from the list to see its plan." />
             )}
           </Card>
-        </div>
+          </div>
+        </>
       ) : (
         <Card>
           <EmptyState
