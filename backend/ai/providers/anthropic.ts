@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AiError } from "../errors";
-import type { AiChatRequest, AiChatResult, AiProvider } from "../types";
+import type { AiChatRequest, AiChatResult, AiProvider, AiVisionRequest } from "../types";
 
 export interface AnthropicProviderConfig {
   apiKey: string;
@@ -77,6 +77,68 @@ export class AnthropicProvider implements AiProvider {
         : null,
     };
   }
+
+  /**
+   * Vision-capable structured request: the same forced-tool-call pattern
+   * as `chat()`, but with an image content block alongside the prompt
+   * text. The only caller is backend/ai/visionEngine.ts — nothing here
+   * knows about screenshots, files, or NEXUS's domain types, keeping this
+   * the one file that imports the Anthropic SDK.
+   */
+  async describeImage<T = unknown>(request: AiVisionRequest): Promise<AiChatResult<T>> {
+    let response: Anthropic.Message;
+    try {
+      response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: request.maxOutputTokens ?? this.defaultMaxOutputTokens,
+        system: request.system,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: request.image.mediaType,
+                  data: request.image.base64,
+                },
+              },
+              { type: "text", text: request.prompt },
+            ],
+          },
+        ],
+        tools: [
+          {
+            name: request.responseSchema.name,
+            description: request.responseSchema.description,
+            input_schema: request.responseSchema.schema as Anthropic.Tool.InputSchema,
+          },
+        ],
+        tool_choice: { type: "tool", name: request.responseSchema.name },
+      });
+    } catch (err) {
+      throw mapAnthropicError(err);
+    }
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock =>
+        block.type === "tool_use" && block.name === request.responseSchema.name,
+    );
+    if (!toolUse) {
+      throw new AiError(
+        "INVALID_RESPONSE",
+        "The AI provider finished without returning the required structured visual analysis.",
+      );
+    }
+
+    return {
+      parsed: toolUse.input as T,
+      usage: response.usage
+        ? { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }
+        : null,
+    };
+  }
 }
 
 function mapAnthropicError(err: unknown): AiError {
@@ -91,6 +153,14 @@ function mapAnthropicError(err: unknown): AiError {
     return new AiError(
       "RATE_LIMITED",
       "The AI provider is rate-limiting requests right now. Please try again shortly.",
+      { cause: err },
+    );
+  }
+  // Must be checked before the generic APIConnectionError below — this is a subclass of it.
+  if (err instanceof Anthropic.APIConnectionTimeoutError) {
+    return new AiError(
+      "TIMEOUT",
+      "The AI provider did not respond in time. Please try again.",
       { cause: err },
     );
   }

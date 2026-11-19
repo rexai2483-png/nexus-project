@@ -9,6 +9,8 @@ import {
   conversationService,
   agentManager,
   memoryService,
+  screenCaptureService,
+  screenVisionService,
   getAiStatus,
 } from "../../backend";
 
@@ -92,4 +94,24 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(IpcChannels.MemoryList, () => memoryService.listMemoryRecords());
+
+  ipcMain.handle(IpcChannels.ScreenListCaptures, (_event, input) =>
+    screenCaptureService.listCaptures(input?.limit),
+  );
+  ipcMain.handle(IpcChannels.ScreenGetCapture, async (_event, input) => {
+    const capture = await screenCaptureService.getCapture(input.captureId);
+    if (!capture) throw new Error(`Screen capture "${input.captureId}" was not found.`);
+    return capture;
+  });
+  ipcMain.handle(IpcChannels.ScreenGetImageDataUrl, async (_event, input) => {
+    const dataUrl = await screenCaptureService.getImageDataUrl(input.captureId);
+    if (!dataUrl) throw new Error(`Screen capture "${input.captureId}" was not found.`);
+    return { dataUrl };
+  });
+  ipcMain.handle(IpcChannels.ScreenAnalyze, (_event, input) =>
+    screenVisionService.analyzeCapture(input.captureId),
+  );
+  ipcMain.handle(IpcChannels.ScreenCompare, (_event, input) =>
+    screenVisionService.compareCaptures(input.beforeCaptureId, input.afterCaptureId),
+  );
 }

@@ -235,10 +235,50 @@ model AgentAction {
 
   approvalRequests ApprovalRequest[]
   executionLogs    ExecutionLog[]
+  screenCaptures   ScreenCapture[]
 
   @@index([sessionId])
   @@index([status])
   @@index([submittedAt])
+}
+
+/// A screenshot captured through an explicit, authorized Windows Agent
+/// action (screen.captureScreenshot / screen.captureActiveWindow). Stores
+/// a file reference only — never image bytes — plus whatever window
+/// metadata was available at capture time, and, once a user explicitly
+/// requests it, the result of sending the image to a cloud vision model.
+model ScreenCapture {
+  id            String       @id @default(cuid())
+  /// "FULL_SCREEN" | "ACTIVE_WINDOW"
+  captureType   String
+  /// Absolute path on disk to the PNG file the agent wrote — never the
+  /// image bytes themselves. See shared/types/screenVision.ts.
+  imagePath     String
+  capturedAt    DateTime     @default(now())
+  /// Title of the window that was active at the moment of capture, if any.
+  activeWindowTitle  String?
+  /// {left,top,width,height} of that window, if known. Json.
+  activeWindowRegion Json?
+  agentActionId String?
+  agentAction   AgentAction? @relation(fields: [agentActionId], references: [id], onDelete: SetNull)
+  /// "NOT_REQUESTED" | "PENDING" | "ANALYZED" | "FAILED"
+  analysisStatus String      @default("NOT_REQUESTED")
+  /// Cloud-vision-generated description of what's visible. Never logged —
+  /// see backend/services/screenVisionService.ts.
+  visionDescription String?
+  /// JSON array of DetectedUiElement (shared/types/screenVision.ts): the
+  /// one accessibility-sourced window element (when window metadata was
+  /// available) plus any AI_VISUAL elements once analysis completes.
+  visionElements Json?
+  visionProvider String?
+  visionModel    String?
+  analysisError  String?
+  analyzedAt     DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([capturedAt])
+  @@index([agentActionId])
 }
 
 /// Append-only system/security event log surfaced in the Activity view.

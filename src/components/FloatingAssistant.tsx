@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { EmergencyStopButton } from "./EmergencyStopButton";
+import { ScreenObservationPanel } from "./ScreenObservationPanel";
 import { isPreviewModeActive } from "../lib/nexusBridge";
 import type { AiStatus, Conversation, Message, Task, TaskDetail } from "@shared/types/models";
 
 interface FloatingAssistantProps {
   /** Lets the panel hand off to the Tasks page when a proposed task is opened. */
   onViewTask: (taskId: string) => void;
+  /** Lets the panel hand off to the Screen workspace page. */
+  onViewScreen: () => void;
 }
 
 const POSITION_STORAGE_KEY = "nexus.assistant.position";
@@ -101,7 +104,7 @@ function useDraggablePosition() {
  * visual distinction between a plain reply and a proposed task. Nothing
  * in here claims a task has run for real.
  */
-export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
+export function FloatingAssistant({ onViewTask, onViewScreen }: FloatingAssistantProps) {
   const previewMode = isPreviewModeActive();
   const [open, setOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
@@ -115,6 +118,7 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
   const [sendError, setSendError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showScreenPanel, setShowScreenPanel] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [activeTask, setActiveTask] = useState<TaskDetail | null>(null);
   const [workingDismissed, setWorkingDismissed] = useState(false);
@@ -385,6 +389,19 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
               </button>
               <button
                 type="button"
+                onClick={() => setShowScreenPanel((value) => !value)}
+                aria-pressed={showScreenPanel}
+                aria-label="Screen observation"
+                title="Screen observation"
+                className={[
+                  "rounded px-2 py-1 text-xs transition-colors",
+                  showScreenPanel ? "text-nexus-accent" : "text-nexus-text-muted hover:bg-nexus-surface hover:text-nexus-text",
+                ].join(" ")}
+              >
+                👁
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowHistory((value) => !value)}
                 aria-label="Conversation history"
                 className="rounded px-2 py-1 text-xs text-nexus-text-muted transition-colors hover:bg-nexus-surface hover:text-nexus-text"
@@ -422,6 +439,15 @@ export function FloatingAssistant({ onViewTask }: FloatingAssistantProps) {
               </span>
               <span className="shrink-0 text-nexus-text-faint">View →</span>
             </button>
+          ) : null}
+
+          {showScreenPanel ? (
+            <ScreenObservationPanel
+              onOpenWorkspace={() => {
+                setOpen(false);
+                onViewScreen();
+              }}
+            />
           ) : null}
 
           {showHistory ? (

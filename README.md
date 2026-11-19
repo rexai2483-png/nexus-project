@@ -41,15 +41,17 @@ backend/              Node.js backend foundation (runs inside the main process)
   db/client.ts         Prisma client + SQLite connection resolution
   db/migrate.ts         Fallback migration runner for a fresh packaged-app database
   services/            One module per domain (settings, tasks, activity, approvals,
-                        system, conversations, agent actions) — the only code that
-                        touches Prisma
+                        system, conversations, agent actions, screen captures,
+                        screen vision) — the only code that touches Prisma
   ai/                   AI provider communication, kept separate from orchestration:
-    types.ts             Provider-agnostic AiProvider interface
+    types.ts             Provider-agnostic AiProvider interface (chat + describeImage)
     providers/anthropic.ts  The only file that imports the Anthropic SDK
     providerFactory.ts    Reads env config, builds/validates the configured provider
-    schema.ts              The structured-response JSON schema + runtime validator
+    schema.ts              The structured-response JSON schema + runtime validator (chat)
+    visionSchema.ts         Same pattern, for screen-vision structured responses
     systemPrompt.ts        NEXUS's system prompt
     conversationEngine.ts  Runs one turn against a provider, retries on invalid output
+    visionEngine.ts         Same pattern, for one screen-vision analysis
     errors.ts               Normalized AiError type + provider-error mapping
   agent/                Owns the Windows Agent child process from the main-process side:
     agentClient.ts        Spawns the agent, speaks the authenticated local-socket
@@ -66,7 +68,8 @@ agent/                 Standalone Windows Agent process (plain Node, not Electro
   actions/registry.ts    Central action registry: validates params, enforces
                          timeouts, turns every result into a structured outcome
   actions/apps.ts         app.launch / app.isRunning / app.getActiveWindow
-  actions/screen.ts       screen.captureScreenshot
+  actions/screen.ts       screen.captureScreenshot / screen.captureActiveWindow —
+                         both attach capture timestamp + active-window metadata
   actions/input.ts        input.moveMouse / input.click / input.typeText /
                          input.sendShortcut + releaseAllInputs() for emergency stop
   actions/files.ts        fs.listDirectory / fs.readFileMetadata / fs.createFolder /
@@ -82,15 +85,22 @@ shared/types/          Types shared by backend, renderer, AND the agent process
                          source of truth both the backend and the agent validate against
   agentProtocol.ts        The backend <-> agent wire protocol
   agentApprovedApps.ts     Hardcoded approved-application/shortcut catalogs
+  screenVision.ts          Screen-understanding domain types (ScreenCapture,
+                         DetectedUiElement, BoundingBox, ScreenComparisonResult)
+                         plus the pure, deterministic `compareScreenCaptures()` —
+                         shared verbatim by the backend and the Preview Mode mock
 
 src/                   React renderer (Vite root)
   components/          Sidebar, cards, empty states, task detail view, chat UI
                         (FloatingAssistant — draggable, three visual states,
                         optional Electron always-on-top — ChatMessage,
                         TaskProposalCard, EmergencyStopButton,
-                        PreviewModeBanner)
+                        PreviewModeBanner), BoundingBoxOverlay (renders detected
+                        elements over a screenshot), ScreenObservationPanel
+                        (floating-assistant screen panel)
   pages/                Overview, Tasks (master-detail plan viewer), Agent (Windows
-                        Agent control panel), Activity, Memory, Settings
+                        Agent control panel), Activity, Memory, Settings, Screen
+                        (Screen Understanding workspace)
   preview/              Browser Preview Mode's mock data + mock `NexusBridge`
                         implementation — see "Browser Preview Mode" below
   lib/nexusBridge.ts     Resolves the real Electron bridge or (dev-only) the
@@ -130,6 +140,24 @@ deliberately separate modules.
   never as administrator, never inside Electron. See **Windows Agent** below for
   its full security model (authenticated IPC, action registry, approval gating,
   filesystem sandboxing, emergency stop).
+- Screenshots are only ever captured through the same explicit, submitted-and-
+  approved `AgentAction` flow as every other agent action — there is no
+  background/timer-driven capture path, and the Agent page always shows a
+  visible "capturing..." state while one is in flight. Screenshot bytes are
+  written to disk by the agent and referenced from `ScreenCapture.imagePath`;
+  they are never stored as database blobs and never sent to the renderer as a
+  raw filesystem path. The renderer only ever receives image bytes through
+  `screen:getImageDataUrl`, which reads a `data:` URL for an `imagePath` that
+  is already a row the backend itself recorded — it cannot be used to read an
+  arbitrary file, because it never accepts a path, only a known capture `id`.
+  Sending a screenshot to the configured AI vision provider is a separate,
+  explicit action (`screen:analyze`) — capturing a screenshot never implies an
+  upload. Screenshot contents and any text the AI extracts from them are
+  **never written to `SystemEvent`/activity logs** — only the capture id and
+  provider/model name are; and the vision system prompt explicitly instructs
+  the model to describe only what's visible and to ignore any instruction-like
+  text that appears inside the image itself, so visual content can never
+  override NEXUS's own rules.
 
 ## Database foundation
 
@@ -158,6 +186,15 @@ indexes:
 - `AgentAction` — one explicitly submitted, validated Windows Agent action —
   type, parameters, permission level, approval requirement, full lifecycle
   status, structured result, and (for screenshots) a stored file reference
+- `ScreenCapture` — one authorized screenshot (full-desktop or active-window):
+  capture type, a file-reference `imagePath` (never a DB blob), capture
+  timestamp, active-window title/region at capture time, an optional link
+  back to the `AgentAction` that produced it (`SetNull` on delete, so deleting
+  an old action never orphans the capture into a dangling foreign key), and
+  the AI vision analysis state (`NOT_REQUESTED` / `ANALYZING` / `ANALYZED` /
+  `FAILED`), description, detected elements (`Json`), provider/model, and any
+  analysis error. Screen comparisons are computed on demand from two existing
+  rows via `compareScreenCaptures()` and are never persisted as their own table.
 - `SystemEvent` — append-only system/security event log, shown in the Activity view;
   records AI replies, proposed tasks, AI request failures, and every Windows
   Agent connection/action/approval/emergency-stop event
@@ -170,9 +207,10 @@ type (SQLite stores it as serialized text).
 
 Schema changes since the initial migration are additive — the original
 `20261031..._init` migration is untouched; `20261101..._ai_conversation_engine`
-added the conversation/task-planning columns, and `20261102..._windows_agent`
+added the conversation/task-planning columns, `20261102..._windows_agent`
 added `AgentAction` plus the `AgentSession`/`ExecutionLog`/`ApprovalRequest`
-extensions this sprint needed, all on top of it.
+extensions, and `20261118..._screen_understanding` added the `ScreenCapture`
+table and its relation to `AgentAction`, all on top of it.
 
 ## AI provider configuration
 
@@ -200,6 +238,14 @@ Every AI response is forced through a structured tool call (not parsed from free
 text) and re-validated at runtime in `backend/ai/schema.ts` before anything is
 persisted or shown; a response that still fails validation gets one retry with a
 corrective instruction before NEXUS reports an error.
+
+The same `AiProvider` interface also exposes `describeImage()`, used for screen
+understanding (see below) — it is the same Anthropic adapter, the same forced
+tool-call/validate/retry-once pattern (`visionSchema.ts`/`visionEngine.ts`), and
+the same server-side-only credential handling; no second AI architecture was
+introduced. Vision-specific failure modes (an unsupported image format, a
+request timeout) map onto the same `AiErrorCode` union (`UNSUPPORTED_FORMAT`,
+`TIMEOUT`) the chat path already used for connection/rate-limit/auth errors.
 
 ## Windows Agent
 
@@ -274,6 +320,69 @@ It will print `NEXUS_AGENT_READY ...` once listening; connect with any
 newline-delimited-JSON socket client and send `{"type":"auth","token":"test-token"}`
 first.
 
+## Screen Understanding
+
+Lets NEXUS capture, inspect, and understand what's currently on the Windows
+desktop — observation only, never a way for the AI to act on what it sees.
+
+**Capture.** Two `LOW`-permission, no-approval-required agent actions:
+`screen.captureScreenshot` (full desktop) and `screen.captureActiveWindow`
+(just the foreground window's region, via nut-js's `getActiveWindow()`).
+Both are only ever triggered by an explicit human action — a button on the
+Agent page, the Screen workspace, or the floating assistant's screen panel —
+never on a timer and never silently; the UI shows a visible "capturing..."
+state while the action is in flight. Every successful capture writes a PNG
+to disk and records one `ScreenCapture` row (`backend/agent/agentManager.ts`
+does this automatically as part of the normal `AgentAction` completion path —
+no separate "save" step) with its capture timestamp and, when the agent could
+read it, the active window's title and region at the moment of capture.
+
+**Cloud vision analysis.** A capture's "Analyze with AI Vision" action
+(`screen:analyze` → `backend/services/screenVisionService.ts`) sends the
+image to the configured Anthropic model via `describeImage()` and asks for a
+structured description plus a list of detected elements (type, label,
+bounding box, confidence, whether it looks interactive). The vision system
+prompt (`backend/ai/visionEngine.ts`) explicitly tells the model to report
+only what is visible, never claim an action happened, and never follow any
+instruction-like text that appears inside the screenshot itself — screenshot
+content is treated as untrusted input, the same way AI chat output is treated
+as untrusted for approval decisions. Analysis never happens implicitly: it is
+its own explicit, separate action from capturing. Failures (no provider
+configured, an unsupported image extension, an unreadable file, a provider
+timeout/API error) resolve the capture to `FAILED` with a human-readable
+`analysisError` instead of throwing — the workspace always has something
+sensible to show.
+
+**UI element understanding.** `DetectedUiElement` distinguishes **where an
+element came from**: `ACCESSIBILITY` for the one element
+`screenCaptureService.recordCapture()` can derive directly from the agent's
+own active-window metadata (no AI involved, confidence `1`), versus
+`AI_VISUAL` for everything the vision model estimated from pixels (its
+reported confidence, always `< 1`). Re-analyzing a capture preserves its
+`ACCESSIBILITY` elements and only replaces the `AI_VISUAL` ones. The Screen
+workspace renders both kinds over the screenshot (`BoundingBoxOverlay.tsx`,
+percentage-positioned so it holds up at any zoom level) with a different
+border color per source, and labels them accordingly in the elements list —
+never shown as equivalent or indistinguishable.
+
+**Screen change detection.** `shared/types/screenVision.ts#compareScreenCaptures()`
+is a small, pure, deterministic function (no AI call) that matches elements
+between two captures by `source:type:label`, and reports which are new,
+removed, or changed (moved by more than a few pixels, or flipped
+interactive/non-interactive), plus a `possibleTransition` flag/reason derived
+from the active-window title changing or a large drop in matched elements.
+Being deterministic and shared, it produces identical results whether it's
+comparing two real captures or two Preview Mode samples, and it only ever
+reports differences actually present in the two elements lists — never a
+change it can't support from the captures themselves.
+
+**Dashboard.** The **Screen** workspace (`src/pages/Screen.tsx`) lists recent
+captures, shows the selected one's screenshot with its bounding-box overlay,
+active application, capture time, AI description, and detected elements, and
+has a separate "Compare two captures" panel. The floating assistant's 👁
+panel (`ScreenObservationPanel.tsx`) surfaces the latest capture and a
+"Capture screen now" shortcut, and links into the full workspace.
+
 ## Browser Preview Mode
 
 A development-only mode that makes the full visual experience explorable
@@ -313,10 +422,28 @@ local, in-memory, and reset on reload:
 - A preview-only memory management UI (add/delete records) in the Memory
   Centre — gated behind Preview Mode and never part of the real
   `NexusBridge` contract, so it can't be mistaken for a real persistence path
+- Three clearly-sample `ScreenCapture`s for the Screen Understanding workspace
+  (an already-analyzed "NEXUS Notes" full-desktop capture, an already-analyzed
+  "Calculator" active-window capture, and a not-yet-analyzed "File Explorer"
+  capture) — generated inline as labeled SVG images (never a real screenshot),
+  with hand-authored sample `DetectedUiElement`s for both the `ACCESSIBILITY`
+  and `AI_VISUAL` sources so bounding-box rendering is demonstrable. You can
+  open each sample, inspect/hover its detected elements, trigger "Analyze with
+  AI Vision" on the unanalyzed one (returns an instant canned result, clearly
+  tagged `visionProvider: "Preview Mode simulated-vision"` rather than a real
+  provider name), and compare the two already-analyzed samples — they were
+  deliberately authored with different active windows and element sets, so
+  the comparison surfaces real, non-trivial added/removed elements and a
+  `possibleTransition`, using the exact same `compareScreenCaptures()`
+  function the real backend calls. Submitting either real capture action
+  (`screen.captureScreenshot` / `screen.captureActiveWindow`) in Preview Mode
+  also adds one brand-new, generic, equally-labeled sample capture, the same
+  way the simulated agent already handles every other action.
 
 **What it will never do:** claim a real application opened, a real file was
 created, or a real screenshot was taken — simulated action results are
-tagged `preview: true` and worded accordingly; call anything in `agent/` or
+tagged `preview: true` and worded accordingly; present a sample screenshot or
+its detected elements as a live observation; call anything in `agent/` or
 `backend/`; or activate outside a dev build.
 
 ## Getting started
@@ -416,6 +543,12 @@ Implemented so far:
 - The floating assistant is draggable, persists its position, shows a
   distinct "working" state with real per-step progress when a task is
   running, and (in Electron only) can pin the NEXUS window always-on-top
+- Screen understanding: authorized full-desktop/active-window screenshot
+  capture with timestamp + active-window metadata, cloud AI vision analysis
+  (structured description + detected elements), accessibility-vs-AI-estimated
+  element provenance, deterministic screen-change comparison, and a dedicated
+  Screen workspace plus a floating-assistant screen panel — see the dedicated
+  section above
 - Browser Preview Mode — see the dedicated section above
 
 Explicitly **not** implemented yet (by design, for a later phase):
@@ -427,6 +560,11 @@ Explicitly **not** implemented yet (by design, for a later phase):
   metadata, create folders, and create/overwrite-with-approval files)
 - Autonomous *task* execution — a `Task`'s steps are still "planned, not
   started"; only the separate, explicit Agent-page quick actions actually run
+- Any AI-driven interaction with what's on screen — screen understanding in
+  this release is strictly observation: capture, describe, detect elements,
+  and compare. There is no path from a vision result back into
+  `input.moveMouse`/`input.click`/`input.typeText`, and no continuous or
+  scheduled capture of any kind
 
 The dashboard reflects this honestly: when running against the real backend
 (`npm run dev` / `npm start`), Memory still shows a real, currently-empty
@@ -460,3 +598,18 @@ the real Electron bridge — see **Browser Preview Mode** above.
 - Window titles/regions reported by `app.getActiveWindow` depend on the
   desktop environment actually publishing them; on this sandbox's fluxbox
   window manager, titles frequently came back empty even for a real window.
+  `screen.captureActiveWindow` shares this dependency — on a host with no
+  active-window concept it fails with a clear error rather than capturing
+  something misleading.
+- Screen understanding's vision path (`describeImage()` calling the real
+  Anthropic API) was verified by type-checking and by an end-to-end run
+  against the Preview Mode mock (which exercises the same request/response
+  shapes and error-mapping code), but not against the live Anthropic API
+  itself — this sandbox has no configured API key. Likewise,
+  `screenCaptureService`/`screenVisionService`'s actual database-backed
+  bodies could not be exercised inside the full Electron runtime in this
+  sandbox; they were verified via `tsc`, via a standalone script that
+  constructs a `PrismaClient` directly against the same schema (bypassing
+  `backend/db/client.ts`, which imports Electron's `app` unconditionally —
+  a pre-existing constraint, not introduced this sprint), and via the
+  Preview Mode mock exercising equivalent logic.

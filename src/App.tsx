@@ -6,6 +6,7 @@ import { PreviewModeBanner } from "./components/PreviewModeBanner";
 import { Overview } from "./pages/Overview";
 import { Tasks } from "./pages/Tasks";
 import { Agent } from "./pages/Agent";
+import { Screen } from "./pages/Screen";
 import { Activity } from "./pages/Activity";
 import { Memory } from "./pages/Memory";
 import { Settings } from "./pages/Settings";
@@ -31,12 +32,17 @@ export default function App() {
     setActive("tasks");
   }
 
+  function viewScreen() {
+    setActive("screen");
+  }
+
   const PAGES: Record<NavKey, () => JSX.Element> = {
     overview: () => <Overview onNavigate={setActive} />,
     tasks: () => (
       <Tasks focusTaskId={focusTaskId} onFocusHandled={() => setFocusTaskId(null)} />
     ),
     agent: Agent,
+    screen: Screen,
     activity: Activity,
     memory: Memory,
     settings: () => <Settings onNavigate={setActive} />,
@@ -67,7 +73,7 @@ export default function App() {
         {/* FloatingAssistant reads window.nexus the same unguarded way Tasks
             used to, and is mounted on every page — contain it the same way. */}
         <ErrorBoundary label="Assistant">
-          <FloatingAssistant onViewTask={viewTask} />
+          <FloatingAssistant onViewTask={viewTask} onViewScreen={viewScreen} />
         </ErrorBoundary>
       </div>
     </div>

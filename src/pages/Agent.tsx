@@ -176,8 +176,19 @@ export function Agent() {
               onClick={() => void submit("screen.captureScreenshot", {}, "captureScreenshot")}
               className="w-full rounded border border-nexus-border px-2 py-1 text-[11px] text-nexus-text-muted hover:text-nexus-text disabled:opacity-40"
             >
-              Capture screenshot
+              Capture full screen
             </button>
+            <button
+              type="button"
+              disabled={!connected || busyAction !== null}
+              onClick={() => void submit("screen.captureActiveWindow", {}, "captureActiveWindow")}
+              className="w-full rounded border border-nexus-border px-2 py-1 text-[11px] text-nexus-text-muted hover:text-nexus-text disabled:opacity-40"
+            >
+              Capture active window
+            </button>
+            <p className="text-[10px] text-nexus-text-faint">
+              Captures appear in the Screen workspace with timestamp and window metadata attached.
+            </p>
           </div>
 
           <div className="space-y-2 rounded-md border border-nexus-border p-3">

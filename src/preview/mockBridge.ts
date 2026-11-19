@@ -4,6 +4,7 @@ import {
   type AgentActionType,
 } from "@shared/types/agentActions";
 import { APPROVED_APPLICATIONS } from "@shared/types/agentApprovedApps";
+import { compareScreenCaptures, type DetectedUiElement, type ScreenCapture } from "@shared/types/screenVision";
 import type {
   ActivityListInput,
   AgentCancelActionInput,
@@ -14,6 +15,11 @@ import type {
   ConversationGetInput,
   MessageSendInput,
   NexusBridge,
+  ScreenAnalyzeInput,
+  ScreenCompareInput,
+  ScreenGetCaptureInput,
+  ScreenGetImageDataUrlInput,
+  ScreenListCapturesInput,
   SettingsUpdateInput,
   TaskGetInput,
 } from "@shared/types/ipc";
@@ -30,12 +36,14 @@ import type {
   TaskDetail,
 } from "@shared/types/models";
 import {
+  createGenericCaptureImage,
   createSeedActivity,
   createSeedAgentActions,
   createSeedAgentStatus,
   createSeedApprovals,
   createSeedConversations,
   createSeedMemory,
+  createSeedScreenCaptures,
   createSeedSettings,
   createSeedTasks,
   nextPreviewId,
@@ -86,6 +94,9 @@ let settings = createSeedSettings();
 let agentStatus = createSeedAgentStatus();
 const agentActions: AgentAction[] = [];
 const approvals: ApprovalRequest[] = [];
+const screenCaptures: ScreenCapture[] = [];
+let screenImages: Record<string, string> = {};
+let screenPendingAnalysis: Record<string, { description: string; elements: DetectedUiElement[] }> = {};
 
 let seeded = false;
 function ensureSeeded(): void {
@@ -99,6 +110,52 @@ function ensureSeeded(): void {
   memory.push(...createSeedMemory());
   agentActions.push(...createSeedAgentActions());
   approvals.push(...createSeedApprovals(tasks));
+
+  const screenSeed = createSeedScreenCaptures();
+  screenCaptures.push(...screenSeed.captures);
+  screenImages = { ...screenSeed.images };
+  screenPendingAnalysis = { ...screenSeed.pendingAnalysis };
+}
+
+/**
+ * Creates a brand-new, never-analyzed ScreenCapture whenever a
+ * `screen.captureScreenshot` / `screen.captureActiveWindow` action
+ * "succeeds" in Preview Mode — mirrors the real backend hooking the same
+ * two action types into `screenCaptureService.recordCapture()` (see
+ * backend/agent/agentManager.ts#handleActionResult). The image is a
+ * generic labeled placeholder (src/preview/mockData.ts#createGenericCaptureImage),
+ * never implying a real screenshot was taken.
+ */
+function recordSimulatedScreenCapture(actionType: "screen.captureScreenshot" | "screen.captureActiveWindow"): ScreenCapture {
+  const id = nextPreviewId("capture");
+  const isWindowCapture = actionType === "screen.captureActiveWindow";
+  const title = isWindowCapture ? "Notepad - Untitled" : "Desktop";
+  const width = isWindowCapture ? 640 : 1280;
+  const height = isWindowCapture ? 480 : 800;
+  const region = { left: 0, top: 0, width, height };
+
+  const capture: ScreenCapture = {
+    id,
+    captureType: isWindowCapture ? "ACTIVE_WINDOW" : "FULL_SCREEN",
+    capturedAt: nowIso(),
+    activeWindowTitle: title,
+    activeWindowRegion: region,
+    agentActionId: null,
+    analysisStatus: "NOT_REQUESTED",
+    visionDescription: null,
+    visionElements: [
+      { id: "accessibility-window", source: "ACCESSIBILITY", type: "window", label: title, boundingBox: region, confidence: 1, interactive: true },
+    ],
+    visionProvider: null,
+    visionModel: null,
+    analysisError: null,
+    analyzedAt: null,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  screenCaptures.unshift(capture);
+  screenImages[id] = createGenericCaptureImage(title, width, height);
+  return capture;
 }
 
 function recordActivity(event: Pick<SystemEvent, "type" | "source" | "message">): void {
@@ -160,7 +217,12 @@ function simulateActionResult(type: AgentActionType, parameters: Record<string, 
     case "app.getActiveWindow":
       return { ok: true, result: { preview: true, title: "Preview Window — sample.txt", bounds: { x: 120, y: 90, width: 800, height: 600 } } };
     case "screen.captureScreenshot":
-      return { ok: true, result: { preview: true, screenshotPath: null, note: "Preview Mode — no real screenshot was captured." } };
+    case "screen.captureActiveWindow":
+      // The actual ScreenCapture row is created separately by
+      // recordSimulatedScreenCapture() — see runSimulatedAction() below —
+      // mirroring how the real backend's agentManager hooks into these
+      // two action types' success, not their result payload shape.
+      return { ok: true, result: { preview: true, captured: true } };
     case "input.moveMouse":
       return { ok: true, result: { preview: true, x: parameters.x, y: parameters.y } };
     case "input.click":
@@ -198,6 +260,14 @@ async function runSimulatedAction(action: AgentAction): Promise<void> {
   if (outcome.ok) {
     action.status = "SUCCEEDED";
     action.result = outcome.result;
+    if (action.type === "screen.captureScreenshot" || action.type === "screen.captureActiveWindow") {
+      const capture = recordSimulatedScreenCapture(action.type);
+      recordActivity({
+        type: "INFO",
+        source: "AGENT",
+        message: `(Preview) Simulated ${capture.captureType === "FULL_SCREEN" ? "full screen" : "active window"} capture recorded.`,
+      });
+    }
     recordActivity({ type: "INFO", source: "AGENT", message: `(Preview) Action "${action.type}" completed successfully.` });
   } else {
     action.status = "FAILED";
@@ -600,6 +670,57 @@ export function createMockNexusBridge(): NexusBridge {
     memory: {
       async list() {
         return [...memory].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      },
+    },
+    screen: {
+      async listCaptures(input?: ScreenListCapturesInput) {
+        const limit = input?.limit ?? 20;
+        return [...screenCaptures].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)).slice(0, limit);
+      },
+      async getCapture(input: ScreenGetCaptureInput) {
+        const found = screenCaptures.find((c) => c.id === input.captureId);
+        if (!found) throw new Error(`Screen capture "${input.captureId}" was not found.`);
+        return found;
+      },
+      async getImageDataUrl(input: ScreenGetImageDataUrlInput) {
+        const dataUrl = screenImages[input.captureId];
+        if (!dataUrl) throw new Error(`Screen capture "${input.captureId}" was not found.`);
+        return { dataUrl };
+      },
+      async analyze(input: ScreenAnalyzeInput) {
+        const capture = screenCaptures.find((c) => c.id === input.captureId);
+        if (!capture) throw new Error(`Screen capture "${input.captureId}" was not found.`);
+
+        capture.analysisStatus = "PENDING";
+        // Simulate the same AI "thinking" latency as a real vision call.
+        await delay(700);
+
+        const accessibilityElements = capture.visionElements.filter((element) => element.source === "ACCESSIBILITY");
+        const canned = screenPendingAnalysis[capture.id];
+        if (canned) {
+          capture.visionDescription = canned.description;
+          capture.visionElements = [...accessibilityElements, ...canned.elements.filter((element) => element.source !== "ACCESSIBILITY")];
+        } else if (!capture.visionDescription) {
+          capture.visionDescription = `(Preview) Simulated visual analysis of "${capture.activeWindowTitle ?? "this capture"}" — no distinct elements beyond the window itself could be estimated.`;
+        }
+        capture.analysisStatus = "ANALYZED";
+        capture.visionProvider = "Preview Mode";
+        capture.visionModel = "simulated-vision";
+        capture.analyzedAt = nowIso();
+        capture.analysisError = null;
+
+        recordActivity({
+          type: "INFO",
+          source: "AGENT",
+          message: `(Preview) Simulated AI visual analysis completed for capture ${capture.id}.`,
+        });
+        return capture;
+      },
+      async compare(input: ScreenCompareInput) {
+        const before = screenCaptures.find((c) => c.id === input.beforeCaptureId);
+        const after = screenCaptures.find((c) => c.id === input.afterCaptureId);
+        if (!before || !after) throw new Error("Both captures must exist to compare them.");
+        return compareScreenCaptures(before, after);
       },
     },
   };

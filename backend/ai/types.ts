@@ -28,6 +28,21 @@ export interface AiChatRequest {
   maxOutputTokens?: number;
 }
 
+/** A single image to send to a vision-capable model. Base64, never a file path or URL — the caller (backend/services/screenVisionService.ts) is responsible for reading the file and never logging its bytes. */
+export interface AiImageInput {
+  base64: string;
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+}
+
+export interface AiVisionRequest {
+  system: string;
+  /** Instruction text accompanying the image, e.g. what context to consider. */
+  prompt: string;
+  image: AiImageInput;
+  responseSchema: AiResponseSchema;
+  maxOutputTokens?: number;
+}
+
 export interface AiUsage {
   inputTokens: number;
   outputTokens: number;
@@ -43,4 +58,6 @@ export interface AiProvider {
   readonly name: string;
   readonly model: string;
   chat<T = unknown>(request: AiChatRequest): Promise<AiChatResult<T>>;
+  /** Vision-capable structured request — see backend/ai/visionEngine.ts for the only caller. */
+  describeImage<T = unknown>(request: AiVisionRequest): Promise<AiChatResult<T>>;
 }

@@ -233,6 +233,8 @@ export type AiErrorCode =
   | "AUTH_ERROR"
   | "RATE_LIMITED"
   | "NETWORK_ERROR"
+  | "TIMEOUT"
+  | "UNSUPPORTED_FORMAT"
   | "INVALID_RESPONSE"
   | "UNKNOWN";
 

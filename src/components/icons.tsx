@@ -65,6 +65,17 @@ function AgentIcon(props: IconProps) {
   );
 }
 
+function ScreenIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="4" width="18" height="13" rx="1.5" />
+      <path d="M8 21h8M12 17v4" />
+      <rect x="6.5" y="7" width="6" height="4.5" rx="0.5" opacity="0.5" />
+      <circle cx="17" cy="9" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function SettingsIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -82,6 +93,7 @@ export const NAV_ICONS: Record<NavKey, (props: IconProps) => JSX.Element> = {
   overview: OverviewIcon,
   tasks: TasksIcon,
   agent: AgentIcon,
+  screen: ScreenIcon,
   activity: ActivityIcon,
   memory: MemoryIcon,
   settings: SettingsIcon,

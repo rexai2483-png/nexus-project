@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as activityService from "../services/activityService";
 import * as agentActionService from "../services/agentActionService";
 import * as approvalService from "../services/approvalService";
+import * as screenCaptureService from "../services/screenCaptureService";
 import {
   AGENT_ACTION_CATALOG,
   requiresApprovalForInvocation,
@@ -15,7 +16,30 @@ import type {
   AgentStatusSnapshot,
   ApprovalRequest,
 } from "../../shared/types/models";
+import type { BoundingBox, ScreenCaptureType } from "../../shared/types/screenVision";
 import { AgentClient, type AgentClientEvents } from "./agentClient";
+
+const SCREEN_CAPTURE_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "screen.captureScreenshot",
+  "screen.captureActiveWindow",
+]);
+
+/** Parses the `activeWindow` field every screen capture action's result carries, if present and well-formed. */
+function parseActiveWindow(data: Record<string, unknown>): { title: string; region: BoundingBox } | null {
+  const activeWindow = data.activeWindow as Record<string, unknown> | null | undefined;
+  if (!activeWindow || typeof activeWindow.title !== "string") return null;
+  const region = activeWindow.region as Record<string, unknown> | undefined;
+  if (
+    !region ||
+    typeof region.left !== "number" ||
+    typeof region.top !== "number" ||
+    typeof region.width !== "number" ||
+    typeof region.height !== "number"
+  ) {
+    return null;
+  }
+  return { title: activeWindow.title, region: { left: region.left, top: region.top, width: region.width, height: region.height } };
+}
 
 /**
  * The single owner of the Windows Agent's lifecycle: spawning/connecting
@@ -87,13 +111,30 @@ async function handleActionResult(actionId: string, result: AgentActionResult): 
 
   if (result.ok) {
     const data = result.data as Record<string, unknown> | null;
-    const screenshotPath =
-      action.type === "screen.captureScreenshot" && data && typeof data.path === "string" ? data.path : null;
+    const isScreenCapture = SCREEN_CAPTURE_ACTION_TYPES.has(action.type);
+    const screenshotPath = isScreenCapture && data && typeof data.path === "string" ? data.path : null;
     await agentActionService.completeAgentAction(actionId, { ok: true, result: result.data, screenshotPath });
 
     if (action.type === "app.getActiveWindow" && data && typeof data.title === "string") {
       lastKnownActiveWindowTitle = data.title;
     }
+
+    if (screenshotPath && data && typeof data.capturedAt === "string") {
+      const activeWindow = parseActiveWindow(data);
+      if (activeWindow) lastKnownActiveWindowTitle = activeWindow.title;
+      // Every ScreenCapture row traces back to exactly one explicit,
+      // already-approved AgentAction — this is the only call site, so
+      // there is no path to a silent/background capture.
+      await screenCaptureService.recordCapture({
+        agentActionId: actionId,
+        captureType: action.type as ScreenCaptureType,
+        imagePath: screenshotPath,
+        capturedAt: data.capturedAt,
+        activeWindowTitle: activeWindow?.title ?? null,
+        activeWindowRegion: activeWindow?.region ?? null,
+      });
+    }
+
     await activityService.recordSystemEvent({
       type: "INFO",
       source: "AGENT",

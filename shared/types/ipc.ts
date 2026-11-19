@@ -29,6 +29,7 @@ import type {
   TaskDetail,
   UserSettings,
 } from "./models";
+import type { ScreenCapture, ScreenComparisonResult } from "./screenVision";
 
 export const IpcChannels = {
   SystemGetStatus: "system:getStatus",
@@ -53,6 +54,11 @@ export const IpcChannels = {
   AgentSubmitAction: "agent:submitAction",
   AgentCancelAction: "agent:cancelAction",
   MemoryList: "memory:list",
+  ScreenListCaptures: "screen:listCaptures",
+  ScreenGetCapture: "screen:getCapture",
+  ScreenGetImageDataUrl: "screen:getImageDataUrl",
+  ScreenAnalyze: "screen:analyze",
+  ScreenCompare: "screen:compare",
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -110,6 +116,27 @@ export interface AgentCancelActionInput {
   actionId: string;
 }
 
+export interface ScreenListCapturesInput {
+  limit?: number;
+}
+
+export interface ScreenGetCaptureInput {
+  captureId: string;
+}
+
+export interface ScreenGetImageDataUrlInput {
+  captureId: string;
+}
+
+export interface ScreenAnalyzeInput {
+  captureId: string;
+}
+
+export interface ScreenCompareInput {
+  beforeCaptureId: string;
+  afterCaptureId: string;
+}
+
 /** Request payload type for each IPC channel. `void` = no arguments. */
 export interface IpcRequestMap {
   [IpcChannels.SystemGetStatus]: void;
@@ -134,6 +161,11 @@ export interface IpcRequestMap {
   [IpcChannels.AgentSubmitAction]: AgentSubmitActionInput;
   [IpcChannels.AgentCancelAction]: AgentCancelActionInput;
   [IpcChannels.MemoryList]: void;
+  [IpcChannels.ScreenListCaptures]: ScreenListCapturesInput | void;
+  [IpcChannels.ScreenGetCapture]: ScreenGetCaptureInput;
+  [IpcChannels.ScreenGetImageDataUrl]: ScreenGetImageDataUrlInput;
+  [IpcChannels.ScreenAnalyze]: ScreenAnalyzeInput;
+  [IpcChannels.ScreenCompare]: ScreenCompareInput;
 }
 
 /** Response payload type for each IPC channel. */
@@ -160,6 +192,11 @@ export interface IpcResponseMap {
   [IpcChannels.AgentSubmitAction]: AgentAction;
   [IpcChannels.AgentCancelAction]: void;
   [IpcChannels.MemoryList]: MemoryRecord[];
+  [IpcChannels.ScreenListCaptures]: ScreenCapture[];
+  [IpcChannels.ScreenGetCapture]: ScreenCapture;
+  [IpcChannels.ScreenGetImageDataUrl]: { dataUrl: string };
+  [IpcChannels.ScreenAnalyze]: ScreenCapture;
+  [IpcChannels.ScreenCompare]: ScreenComparisonResult;
 }
 
 /**
@@ -209,5 +246,13 @@ export interface NexusBridge {
   };
   memory: {
     list: () => Promise<MemoryRecord[]>;
+  };
+  screen: {
+    listCaptures: (input?: ScreenListCapturesInput) => Promise<ScreenCapture[]>;
+    getCapture: (input: ScreenGetCaptureInput) => Promise<ScreenCapture>;
+    /** Resolves to a `data:` URL — the only way image bytes ever reach the renderer. */
+    getImageDataUrl: (input: ScreenGetImageDataUrlInput) => Promise<{ dataUrl: string }>;
+    analyze: (input: ScreenAnalyzeInput) => Promise<ScreenCapture>;
+    compare: (input: ScreenCompareInput) => Promise<ScreenComparisonResult>;
   };
 }

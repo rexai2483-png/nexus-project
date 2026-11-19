@@ -10,6 +10,11 @@ import type {
   IpcChannel,
   MessageSendInput,
   NexusBridge,
+  ScreenAnalyzeInput,
+  ScreenCompareInput,
+  ScreenGetCaptureInput,
+  ScreenGetImageDataUrlInput,
+  ScreenListCapturesInput,
   SettingsUpdateInput,
   SystemSetAlwaysOnTopInput,
   TaskGetInput,
@@ -57,6 +62,11 @@ const Channels = {
   AgentSubmitAction: "agent:submitAction",
   AgentCancelAction: "agent:cancelAction",
   MemoryList: "memory:list",
+  ScreenListCaptures: "screen:listCaptures",
+  ScreenGetCapture: "screen:getCapture",
+  ScreenGetImageDataUrl: "screen:getImageDataUrl",
+  ScreenAnalyze: "screen:analyze",
+  ScreenCompare: "screen:compare",
 } as const satisfies Record<string, IpcChannel>;
 
 const nexusBridge: NexusBridge = {
@@ -105,6 +115,13 @@ const nexusBridge: NexusBridge = {
   },
   memory: {
     list: () => ipcRenderer.invoke(Channels.MemoryList),
+  },
+  screen: {
+    listCaptures: (input?: ScreenListCapturesInput) => ipcRenderer.invoke(Channels.ScreenListCaptures, input),
+    getCapture: (input: ScreenGetCaptureInput) => ipcRenderer.invoke(Channels.ScreenGetCapture, input),
+    getImageDataUrl: (input: ScreenGetImageDataUrlInput) => ipcRenderer.invoke(Channels.ScreenGetImageDataUrl, input),
+    analyze: (input: ScreenAnalyzeInput) => ipcRenderer.invoke(Channels.ScreenAnalyze, input),
+    compare: (input: ScreenCompareInput) => ipcRenderer.invoke(Channels.ScreenCompare, input),
   },
 };
 

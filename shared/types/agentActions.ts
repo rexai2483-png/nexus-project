@@ -18,6 +18,7 @@ export type AgentActionType =
   | "app.isRunning"
   | "app.getActiveWindow"
   | "screen.captureScreenshot"
+  | "screen.captureActiveWindow"
   | "input.moveMouse"
   | "input.click"
   | "input.typeText"
@@ -88,6 +89,18 @@ export const AGENT_ACTION_CATALOG: Record<AgentActionType, AgentActionDefinition
     label: "Capture screenshot",
     description:
       "Captures the current desktop and stores it for review. Every capture is recorded — never taken silently.",
+    permissionLevel: "LOW",
+    requiresApprovalByDefault: false,
+    cancellable: false,
+    timeoutMs: 10_000,
+    params: [],
+  },
+  "screen.captureActiveWindow": {
+    type: "screen.captureActiveWindow",
+    label: "Capture active window",
+    description:
+      "Captures only the currently focused window and stores it for review. Fails clearly if no window is focused " +
+      "or window metadata isn't available, rather than silently falling back to a full-desktop capture.",
     permissionLevel: "LOW",
     requiresApprovalByDefault: false,
     cancellable: false,
