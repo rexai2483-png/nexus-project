@@ -326,7 +326,7 @@ export function createSeedAgentActions(): AgentAction[] {
 // `btoa()` doesn't choke on non-Latin1 characters.
 // ---------------------------------------------------------------------------
 
-function svgDataUrl(width: number, height: number, body: string): string {
+export function svgDataUrl(width: number, height: number, body: string): string {
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
     body +
@@ -334,7 +334,7 @@ function svgDataUrl(width: number, height: number, body: string): string {
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 }
 
-function windowChrome(width: number, height: number, title: string): string {
+export function windowChrome(width: number, height: number, title: string): string {
   return (
     `<rect width="${width}" height="${height}" fill="#15171c" stroke="#24262e" stroke-width="2"/>` +
     `<rect width="${width}" height="34" fill="#1c1e25"/>` +
@@ -343,17 +343,17 @@ function windowChrome(width: number, height: number, title: string): string {
   );
 }
 
-function sampleButton(x: number, y: number, w: number, h: number, label: string): string {
+export function sampleButton(x: number, y: number, w: number, h: number, label: string): string {
   return (
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="#2a3a56" stroke="#5b8def"/>` +
     `<text x="${x + w / 2}" y="${y + h / 2 + 4}" font-family="sans-serif" font-size="12" fill="#e6e7ea" text-anchor="middle">${label}</text>`
   );
 }
 
-const SAMPLE_WIDTH = 1280;
-const SAMPLE_HEIGHT = 800;
-const CALC_WIDTH = 360;
-const CALC_HEIGHT = 520;
+export const SAMPLE_WIDTH = 1280;
+export const SAMPLE_HEIGHT = 800;
+export const CALC_WIDTH = 360;
+export const CALC_HEIGHT = 520;
 
 /**
  * A generic, clearly-labeled placeholder image for a capture created on
@@ -368,6 +368,92 @@ export function createGenericCaptureImage(title: string, width: number, height: 
     windowChrome(width, height, title) +
       `<text x="${width / 2}" y="${height / 2}" font-family="sans-serif" font-size="15" fill="#5b5d66" text-anchor="middle">` +
       `Simulated capture - Preview Mode, not a real screenshot</text>`,
+  );
+}
+
+/**
+ * Regenerates the Calculator sample's image with a different display
+ * value — used by src/preview/mockBridge.ts's vision-interaction
+ * simulation so clicking a digit/equals button on the sample actually
+ * produces a visibly different "after" screenshot to verify against,
+ * instead of a silently-identical one.
+ */
+export function buildCalculatorImage(display: string): string {
+  return svgDataUrl(
+    CALC_WIDTH,
+    CALC_HEIGHT,
+    windowChrome(CALC_WIDTH, CALC_HEIGHT, "Calculator (sample mockup)") +
+      `<rect x="20" y="50" width="320" height="60" fill="#0b0c0f" stroke="#24262e"/>` +
+      `<text x="330" y="90" font-family="sans-serif" font-size="28" fill="#e6e7ea" text-anchor="end">${display}</text>` +
+      sampleButton(20, 140, 70, 60, "7") +
+      sampleButton(100, 140, 70, 60, "8") +
+      sampleButton(180, 140, 70, 60, "9") +
+      sampleButton(260, 140, 70, 200, "="),
+  );
+}
+
+/**
+ * Regenerates the "NEXUS Notes" sample's image, optionally showing an
+ * open File menu (for the "select a menu item" demo) and/or an extra line
+ * of typed text in the document body (for the "type into a text field"
+ * demo) — same purpose as `buildCalculatorImage` above.
+ */
+export function buildNotesImage(options: { showFileMenu?: boolean; typedLine?: string }): string {
+  const menu = options.showFileMenu
+    ? `<rect x="24" y="30" width="110" height="92" fill="#1c1e25" stroke="#2f323c"/>` +
+      `<text x="36" y="50" font-family="sans-serif" font-size="12" fill="#e6e7ea">New</text>` +
+      `<text x="36" y="72" font-family="sans-serif" font-size="12" fill="#e6e7ea">Open</text>` +
+      `<text x="36" y="94" font-family="sans-serif" font-size="12" fill="#e6e7ea">Save</text>` +
+      `<text x="36" y="116" font-family="sans-serif" font-size="12" fill="#e6e7ea">Exit</text>`
+    : "";
+  const typedLine = options.typedLine
+    ? `<text x="276" y="194" font-family="sans-serif" font-size="13" fill="#e6e7ea">${options.typedLine}</text>`
+    : "";
+  return svgDataUrl(
+    SAMPLE_WIDTH,
+    SAMPLE_HEIGHT,
+    windowChrome(SAMPLE_WIDTH, SAMPLE_HEIGHT, "NEXUS Notes - Untitled.txt (sample mockup, not a real screenshot)") +
+      sampleButton(24, 50, 90, 32, "Open") +
+      sampleButton(124, 50, 90, 32, "Save") +
+      `<text x="24" y="38" font-family="sans-serif" font-size="12" fill="#5b5d66">File  Edit  View</text>` +
+      `<rect x="24" y="100" width="220" height="660" fill="#121317" stroke="#24262e"/>` +
+      `<text x="36" y="126" font-family="sans-serif" font-size="12" fill="#8b8d97">Notes</text>` +
+      `<text x="36" y="150" font-family="sans-serif" font-size="12" fill="#8b8d97">Todo</text>` +
+      `<text x="36" y="174" font-family="sans-serif" font-size="12" fill="#8b8d97">Ideas</text>` +
+      `<rect x="260" y="100" width="996" height="660" fill="#0b0c0f" stroke="#24262e"/>` +
+      `<text x="276" y="128" font-family="sans-serif" font-size="13" fill="#e6e7ea">Sprint 4 notes:</text>` +
+      `<text x="276" y="150" font-family="sans-serif" font-size="13" fill="#8b8d97">- Screen capture</text>` +
+      `<text x="276" y="172" font-family="sans-serif" font-size="13" fill="#8b8d97">- Vision analysis</text>` +
+      typedLine +
+      `<text x="24" y="774" font-family="sans-serif" font-size="11" fill="#5b5d66">Word count: 128</text>` +
+      menu,
+  );
+}
+
+/**
+ * Regenerates the "File Explorer" sample's image with one extra row
+ * inserted at the top — used for the "clicking a button creates a new
+ * visible element" demo (e.g. "New Folder").
+ */
+export function buildExplorerImage(extraRowLabel: string | null): string {
+  const rows = extraRowLabel
+    ? [extraRowLabel, "Report.docx", "Notes.txt", "Budget.xlsx"]
+    : ["Report.docx", "Notes.txt", "Budget.xlsx"];
+  const rowMarkup = rows
+    .map((label, index) => {
+      const y = 110 + index * 56;
+      return (
+        `<rect x="24" y="${y}" width="1232" height="48" fill="#121317" stroke="#24262e"/>` +
+        `<text x="40" y="${y + 30}" font-family="sans-serif" font-size="13" fill="#e6e7ea">${label}</text>`
+      );
+    })
+    .join("");
+  return svgDataUrl(
+    SAMPLE_WIDTH,
+    SAMPLE_HEIGHT,
+    windowChrome(SAMPLE_WIDTH, SAMPLE_HEIGHT, "File Explorer - Documents (sample mockup, not a real screenshot)") +
+      sampleButton(24, 50, 140, 32, "New Folder") +
+      rowMarkup,
   );
 }
 

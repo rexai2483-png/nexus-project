@@ -18,6 +18,18 @@ const SHORTCUT_KEY_MAP: Record<string, Key[]> = {
   paste: [Key.LeftControl, Key.V],
   selectAll: [Key.LeftControl, Key.A],
   undo: [Key.LeftControl, Key.Z],
+  // Single navigation keys, added for vision-guided interaction (Sprint 5) —
+  // the same approved-catalog mechanism as the multi-key shortcuts above,
+  // just a one-key combination.
+  enter: [Key.Enter],
+  tab: [Key.Tab],
+  escape: [Key.Escape],
+  backspace: [Key.Backspace],
+  arrowUp: [Key.Up],
+  arrowDown: [Key.Down],
+  arrowLeft: [Key.Left],
+  arrowRight: [Key.Right],
+  space: [Key.Space],
 };
 
 registerAction("input.moveMouse", async (parameters) => {
@@ -52,6 +64,35 @@ registerAction("input.sendShortcut", async (parameters) => {
   await keyboard.pressKey(...keys);
   await keyboard.releaseKey(...keys);
   return { shortcut: shortcutId };
+});
+
+registerAction("input.scroll", async (parameters) => {
+  const x = parameters.x as number | undefined;
+  const y = parameters.y as number | undefined;
+  const direction = parameters.direction as string;
+  const amount = (parameters.amount as number | undefined) ?? 3;
+
+  if (typeof x === "number" && typeof y === "number") {
+    await mouse.setPosition({ x, y });
+  }
+
+  switch (direction) {
+    case "up":
+      await mouse.scrollUp(amount);
+      break;
+    case "down":
+      await mouse.scrollDown(amount);
+      break;
+    case "left":
+      await mouse.scrollLeft(amount);
+      break;
+    case "right":
+      await mouse.scrollRight(amount);
+      break;
+    default:
+      throw new Error(`"${direction}" is not a valid scroll direction.`);
+  }
+  return { direction, amount };
 });
 
 /**

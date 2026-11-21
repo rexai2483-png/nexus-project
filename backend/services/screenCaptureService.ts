@@ -113,6 +113,21 @@ export async function getCapture(id: string): Promise<ScreenCapture | null> {
   return row ? toDto(row) : null;
 }
 
+/**
+ * Looks a capture up by the exact `AgentAction` that produced it — used by
+ * backend/services/visionInteractionService.ts's verification step to find
+ * the screenshot it just asked the agent to take, without racing a
+ * `listCaptures(1)` call against any other capture that might be recorded
+ * around the same time.
+ */
+export async function getCaptureByActionId(agentActionId: string): Promise<ScreenCapture | null> {
+  const row = await prisma.screenCapture.findFirst({
+    where: { agentActionId },
+    orderBy: { capturedAt: "desc" },
+  });
+  return row ? toDto(row) : null;
+}
+
 /** Internal — only backend/services/screenVisionService.ts needs the raw file path, and never passes it to the renderer. */
 export async function getImagePath(id: string): Promise<string | null> {
   const row = await prisma.screenCapture.findUnique({ where: { id }, select: { imagePath: true } });

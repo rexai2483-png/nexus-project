@@ -30,6 +30,7 @@ import type {
   UserSettings,
 } from "./models";
 import type { ScreenCapture, ScreenComparisonResult } from "./screenVision";
+import type { VisionActionRequest, VisionInteractionResult } from "./visionActions";
 
 export const IpcChannels = {
   SystemGetStatus: "system:getStatus",
@@ -59,6 +60,8 @@ export const IpcChannels = {
   ScreenGetImageDataUrl: "screen:getImageDataUrl",
   ScreenAnalyze: "screen:analyze",
   ScreenCompare: "screen:compare",
+  VisionExecuteAction: "vision:executeAction",
+  VisionListInteractions: "vision:listInteractions",
 } as const;
 
 export type IpcChannel = (typeof IpcChannels)[keyof typeof IpcChannels];
@@ -137,6 +140,12 @@ export interface ScreenCompareInput {
   afterCaptureId: string;
 }
 
+export type VisionExecuteActionInput = VisionActionRequest;
+
+export interface VisionListInteractionsInput {
+  limit?: number;
+}
+
 /** Request payload type for each IPC channel. `void` = no arguments. */
 export interface IpcRequestMap {
   [IpcChannels.SystemGetStatus]: void;
@@ -166,6 +175,8 @@ export interface IpcRequestMap {
   [IpcChannels.ScreenGetImageDataUrl]: ScreenGetImageDataUrlInput;
   [IpcChannels.ScreenAnalyze]: ScreenAnalyzeInput;
   [IpcChannels.ScreenCompare]: ScreenCompareInput;
+  [IpcChannels.VisionExecuteAction]: VisionExecuteActionInput;
+  [IpcChannels.VisionListInteractions]: VisionListInteractionsInput | void;
 }
 
 /** Response payload type for each IPC channel. */
@@ -197,6 +208,8 @@ export interface IpcResponseMap {
   [IpcChannels.ScreenGetImageDataUrl]: { dataUrl: string };
   [IpcChannels.ScreenAnalyze]: ScreenCapture;
   [IpcChannels.ScreenCompare]: ScreenComparisonResult;
+  [IpcChannels.VisionExecuteAction]: VisionInteractionResult;
+  [IpcChannels.VisionListInteractions]: VisionInteractionResult[];
 }
 
 /**
@@ -254,5 +267,10 @@ export interface NexusBridge {
     getImageDataUrl: (input: ScreenGetImageDataUrlInput) => Promise<{ dataUrl: string }>;
     analyze: (input: ScreenAnalyzeInput) => Promise<ScreenCapture>;
     compare: (input: ScreenCompareInput) => Promise<ScreenComparisonResult>;
+  };
+  vision: {
+    /** Runs one full observe→act→verify cycle for one previously-identified target. Never rejects for an expected outcome (failure/uncertainty/awaiting approval) — see `VisionInteractionResult.status`. */
+    executeAction: (input: VisionExecuteActionInput) => Promise<VisionInteractionResult>;
+    listInteractions: (input?: VisionListInteractionsInput) => Promise<VisionInteractionResult[]>;
   };
 }

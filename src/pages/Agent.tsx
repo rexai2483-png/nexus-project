@@ -39,6 +39,7 @@ export function Agent() {
   const [shortcutId, setShortcutId] = useState(APPROVED_SHORTCUTS[0]?.id ?? "");
   const [moveX, setMoveX] = useState(100);
   const [moveY, setMoveY] = useState(100);
+  const [scrollDirection, setScrollDirection] = useState<"up" | "down" | "left" | "right">("down");
 
   const refresh = useCallback(async () => {
     try {
@@ -249,6 +250,26 @@ export function Agent() {
                 className="rounded border border-nexus-border px-2 py-1 text-[11px] text-nexus-text-muted hover:text-nexus-text disabled:opacity-40"
               >
                 Send
+              </button>
+            </div>
+            <div className="flex gap-1.5">
+              <select
+                value={scrollDirection}
+                onChange={(e) => setScrollDirection(e.target.value as "up" | "down" | "left" | "right")}
+                className="flex-1 rounded border border-nexus-border bg-nexus-bg px-1.5 py-1 text-[11px] text-nexus-text"
+              >
+                <option value="up">Scroll up</option>
+                <option value="down">Scroll down</option>
+                <option value="left">Scroll left</option>
+                <option value="right">Scroll right</option>
+              </select>
+              <button
+                type="button"
+                disabled={!connected || busyAction !== null}
+                onClick={() => void submit("input.scroll", { direction: scrollDirection, amount: 3 }, "scroll")}
+                className="rounded border border-nexus-border px-2 py-1 text-[11px] text-nexus-text-muted hover:text-nexus-text disabled:opacity-40"
+              >
+                Scroll
               </button>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { StatusDot } from "../components/StatusDot";
 import { BoundingBoxOverlay } from "../components/BoundingBoxOverlay";
+import { VisionInteractionPanel } from "../components/VisionInteractionPanel";
 import type { ScreenCapture, ScreenComparisonResult } from "@shared/types/screenVision";
 
 const POLL_INTERVAL_MS = 4000;
@@ -312,6 +313,21 @@ export function Screen() {
                       </ul>
                     )}
                   </div>
+
+                  {selectedElementId
+                    ? (() => {
+                        const target = selected.visionElements.find((el) => el.id === selectedElementId);
+                        if (!target || target.type.trim().toLowerCase() === "window") return null;
+                        return (
+                          <VisionInteractionPanel
+                            capture={selected}
+                            element={target}
+                            isLatestCapture={captures[0]?.id === selected.id}
+                            onInteractionSettled={() => void refresh()}
+                          />
+                        );
+                      })()
+                    : null}
                 </div>
               )}
             </Card>

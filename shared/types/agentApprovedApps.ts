@@ -30,4 +30,10 @@ export const APPROVED_SHORTCUTS: ApprovedShortcutDefinition[] = [
   { id: "paste", label: "Paste (Ctrl+V)" },
   { id: "selectAll", label: "Select All (Ctrl+A)" },
   { id: "undo", label: "Undo (Ctrl+Z)" },
+  // Single navigation keys — added for vision-guided interaction (Sprint 5),
+  // e.g. confirming a dialog or dismissing a menu after a vision-identified click.
+  { id: "enter", label: "Enter" },
+  { id: "tab", label: "Tab" },
+  { id: "escape", label: "Escape" },
+  { id: "backspace", label: "Backspace" },
 ];

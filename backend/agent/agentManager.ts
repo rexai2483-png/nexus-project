@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import * as activityService from "../services/activityService";
 import * as agentActionService from "../services/agentActionService";
 import * as approvalService from "../services/approvalService";
@@ -6,6 +7,7 @@ import * as screenCaptureService from "../services/screenCaptureService";
 import {
   AGENT_ACTION_CATALOG,
   requiresApprovalForInvocation,
+  SENSITIVE_TARGET_LABEL_PATTERN,
   type AgentActionType,
 } from "../../shared/types/agentActions";
 import type { AgentActionResult, AgentRuntimeStatus } from "../../shared/types/agentProtocol";
@@ -75,6 +77,64 @@ const pendingApprovalActions = new Map<
   { actionType: AgentActionType; parameters: Record<string, unknown> }
 >();
 
+/**
+ * Emits `settled:<actionId>` exactly once, with the final `AgentAction`
+ * DTO, the moment an action reaches a terminal status (SUCCEEDED, FAILED,
+ * CANCELLED, or REJECTED). Internal to this module — the only consumer is
+ * `waitForActionSettlement()` below, which
+ * backend/services/visionInteractionService.ts uses to run its
+ * observe-act-verify loop one step at a time without polling. This does
+ * NOT change when or whether an action executes — it only lets other
+ * backend code learn about an outcome that already happened through the
+ * exact same approval/dispatch path every other action goes through.
+ */
+const actionSettlementEvents = new EventEmitter();
+
+function isTerminalActionStatus(status: AgentAction["status"]): boolean {
+  return status === "SUCCEEDED" || status === "FAILED" || status === "CANCELLED" || status === "REJECTED";
+}
+
+function emitSettled(actionId: string, action: AgentAction): void {
+  if (isTerminalActionStatus(action.status)) {
+    actionSettlementEvents.emit(`settled:${actionId}`, action);
+  }
+}
+
+/**
+ * Resolves once the given action reaches a terminal status, or `null` if
+ * it doesn't within `timeoutMs` (the caller decides what "taking too
+ * long" means for its own purposes — this never rejects). Does NOT wait
+ * for an AWAITING_APPROVAL action to actually be approved — callers that
+ * care should check the returned/current status themselves and treat
+ * "still awaiting approval" as its own outcome rather than blocking
+ * indefinitely on a human decision.
+ */
+export function waitForActionSettlement(actionId: string, timeoutMs = 20_000): Promise<AgentAction | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const onSettled = (action: AgentAction) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(action);
+    };
+    actionSettlementEvents.once(`settled:${actionId}`, onSettled);
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      actionSettlementEvents.removeListener(`settled:${actionId}`, onSettled);
+      resolve(null);
+    }, timeoutMs);
+    // Defends against the (practically impossible, single-threaded-JS)
+    // race where the action already settled before this function's
+    // listener was attached.
+    void agentActionService.getAgentAction(actionId).then((current) => {
+      if (current && isTerminalActionStatus(current.status)) onSettled(current);
+    });
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -86,16 +146,31 @@ function clearHeartbeatTimer(): void {
   }
 }
 
-function describeApprovalRequest(actionType: AgentActionType, parameters: Record<string, unknown>): string {
+function describeApprovalRequest(
+  actionType: AgentActionType,
+  parameters: Record<string, unknown>,
+  targetLabel?: string | null,
+): string {
+  const isSensitiveTarget = typeof targetLabel === "string" && SENSITIVE_TARGET_LABEL_PATTERN.test(targetLabel);
+
   switch (actionType) {
+    case "input.click":
+      // Only vision-guided clicks on a sensitive-looking target require
+      // approval at all (see requiresApprovalForInvocation) — a plain
+      // coordinate click never reaches this branch otherwise.
+      return `Click the element labeled "${targetLabel}". This looks like a consequential action (e.g. sending, submitting, deleting, or paying), so it needs your approval.`;
     case "input.typeText": {
       const text = typeof parameters.text === "string" ? parameters.text : "";
       const target = lastKnownActiveWindowTitle ? ` into "${lastKnownActiveWindowTitle}"` : "";
-      return `Type ${text.length} character(s)${target}. The active window looks like a communication app, so this needs your approval.`;
+      return isSensitiveTarget
+        ? `Type ${text.length} character(s) into the element labeled "${targetLabel}". This looks like a consequential submission, so it needs your approval.`
+        : `Type ${text.length} character(s)${target}. The active window looks like a communication app, so this needs your approval.`;
     }
     case "input.sendShortcut": {
       const target = lastKnownActiveWindowTitle ? ` in "${lastKnownActiveWindowTitle}"` : "";
-      return `Send the "${String(parameters.shortcut)}" shortcut${target}. The active window looks like a communication app, so this needs your approval.`;
+      return isSensitiveTarget
+        ? `Send the "${String(parameters.shortcut)}" key to the element labeled "${targetLabel}". This looks like a consequential action, so it needs your approval.`
+        : `Send the "${String(parameters.shortcut)}" shortcut${target}. The active window looks like a communication app, so this needs your approval.`;
     }
     case "fs.createFile":
       return `Overwrite the existing file at "${String(parameters.path)}". This replaces its contents and cannot be undone automatically.`;
@@ -152,6 +227,9 @@ async function handleActionResult(actionId: string, result: AgentActionResult): 
       message: `Action "${action.type}" failed: ${result.message}`,
     });
   }
+
+  const finalAction = await agentActionService.getAgentAction(actionId);
+  if (finalAction) emitSettled(actionId, finalAction);
 }
 
 async function handleAgentStopped(
@@ -164,6 +242,11 @@ async function handleAgentStopped(
 
   for (const id of interruptedActionIds) {
     await agentActionService.markActionCancelled(id).catch(() => undefined);
+    // Lets anything in-flight waiting on this exact action (e.g. a vision
+    // interaction's observe-act-verify loop) learn about the emergency
+    // STOP immediately instead of idling until its own timeout elapses.
+    const cancelled = await agentActionService.getAgentAction(id).catch(() => null);
+    if (cancelled) emitSettled(id, cancelled);
   }
   if (currentSessionId) {
     await agentActionService.markSessionHalted(currentSessionId).catch(() => undefined);
@@ -385,11 +468,20 @@ function dispatchToAgent(actionId: string, actionType: AgentActionType, paramete
 /**
  * Validates, persists, and (if it doesn't require approval) immediately
  * dispatches one action. This is the single entry point the IPC layer
- * uses to submit agent work — nothing else can reach `AgentClient`.
+ * AND the vision-interaction orchestrator (see
+ * backend/services/visionInteractionService.ts) use to submit agent work
+ * — nothing else can reach `AgentClient`.
+ *
+ * `context.targetLabel` is only ever set by vision-guided interactions —
+ * it's the visible label of the specific detected UI element this
+ * invocation is acting on, and it's passed straight through to the same
+ * centralized `requiresApprovalForInvocation` approval decision every
+ * other action already goes through (see shared/types/agentActions.ts).
  */
 export async function submitAction(
   actionType: AgentActionType,
   parameters: Record<string, unknown>,
+  context: { targetLabel?: string | null } = {},
 ): Promise<AgentAction> {
   if (!client?.isConnected) {
     throw new Error("The Windows Agent is not connected. Start the agent before submitting actions.");
@@ -407,6 +499,7 @@ export async function submitAction(
 
   const requiresApproval = requiresApprovalForInvocation(actionType, parameters, {
     activeWindowTitle: lastKnownActiveWindowTitle,
+    targetLabel: context.targetLabel ?? null,
   });
 
   const actionId = randomUUID();
@@ -424,7 +517,7 @@ export async function submitAction(
     await approvalService.createAgentActionApproval({
       agentActionId: actionId,
       title: `Approve: ${definition.label}`,
-      description: describeApprovalRequest(actionType, parameters),
+      description: describeApprovalRequest(actionType, parameters, context.targetLabel),
     });
     pendingApprovalActions.set(actionId, { actionType, parameters });
     await activityService.recordSystemEvent({
@@ -452,11 +545,16 @@ export async function cancelAction(actionId: string): Promise<void> {
   if (pendingApprovalActions.has(actionId)) {
     pendingApprovalActions.delete(actionId);
     await agentActionService.markActionCancelled(actionId);
+    const cancelled = await agentActionService.getAgentAction(actionId);
+    if (cancelled) emitSettled(actionId, cancelled);
     return;
   }
   if (!client) {
     throw new Error("The Windows Agent is not running.");
   }
+  // The agent reports the actual cancellation outcome asynchronously via
+  // `onActionResult` → `handleActionResult`, which already emits the
+  // settlement event once that arrives — nothing extra to do here.
   client.cancelAction(actionId);
 }
 
@@ -488,8 +586,13 @@ export async function decideApproval(
         resolved.agentActionId,
         "Approved, but the Windows Agent is no longer connected to execute it.",
       );
+      // Rejected here (not dispatched) — this IS the terminal outcome.
+      const rejected = await agentActionService.getAgentAction(resolved.agentActionId);
+      if (rejected) emitSettled(resolved.agentActionId, rejected);
     } else {
       dispatchToAgent(resolved.agentActionId, pending.actionType, pending.parameters);
+      // Dispatched — the real outcome arrives later via handleActionResult,
+      // which emits settlement itself once it does.
     }
     await activityService.recordSystemEvent({
       type: "INFO",
@@ -498,6 +601,8 @@ export async function decideApproval(
     });
   } else {
     await agentActionService.markActionRejected(resolved.agentActionId, "The user denied this action.");
+    const rejected = await agentActionService.getAgentAction(resolved.agentActionId);
+    if (rejected) emitSettled(resolved.agentActionId, rejected);
     await activityService.recordSystemEvent({
       type: "WARNING",
       source: "AGENT",

@@ -23,6 +23,7 @@ export type AgentActionType =
   | "input.click"
   | "input.typeText"
   | "input.sendShortcut"
+  | "input.scroll"
   | "fs.listDirectory"
   | "fs.readFileMetadata"
   | "fs.createFolder"
@@ -147,12 +148,29 @@ export const AGENT_ACTION_CATALOG: Record<AgentActionType, AgentActionDefinition
   "input.sendShortcut": {
     type: "input.sendShortcut",
     label: "Send keyboard shortcut",
-    description: "Sends an approved keyboard shortcut (key combination) from a fixed catalog.",
+    description:
+      "Sends an approved keyboard shortcut or navigation key (key combination) from a fixed catalog — " +
+      'e.g. "save", "copy", "enter", "tab", "escape".',
     permissionLevel: "ELEVATED",
     requiresApprovalByDefault: false,
     cancellable: false,
     timeoutMs: 5_000,
-    params: [{ name: "shortcut", type: "string", required: true, description: 'Approved shortcut id, e.g. "save", "copy".' }],
+    params: [{ name: "shortcut", type: "string", required: true, description: 'Approved shortcut/key id, e.g. "save", "enter", "tab".' }],
+  },
+  "input.scroll": {
+    type: "input.scroll",
+    label: "Scroll",
+    description: "Scrolls the mouse wheel in one direction, optionally at a specific screen position first.",
+    permissionLevel: "LOW",
+    requiresApprovalByDefault: false,
+    cancellable: false,
+    timeoutMs: 5_000,
+    params: [
+      { name: "x", type: "number", required: false, description: "Move here before scrolling (optional)." },
+      { name: "y", type: "number", required: false, description: "Move here before scrolling (optional)." },
+      { name: "direction", type: "string", required: true, description: '"up", "down", "left", or "right".' },
+      { name: "amount", type: "number", required: false, description: 'Number of scroll "steps" (default 3).' },
+    ],
   },
   "fs.listDirectory": {
     type: "fs.listDirectory",
@@ -204,9 +222,24 @@ export const AGENT_ACTION_CATALOG: Record<AgentActionType, AgentActionDefinition
 export const COMMUNICATION_APP_TITLE_PATTERN =
   /outlook|gmail|mail\s|slack|teams|discord|whatsapp|telegram|messenger|skype|zoom|signal/i;
 
+/**
+ * Visible labels that make interacting with THAT specific element a
+ * consequential/externally-visible action regardless of which window it's
+ * in — "send a message", "submit a payment", "delete a file", "install
+ * something" — so a vision-guided click/type/shortcut targeting an element
+ * with one of these labels always requires approval, the same way typing
+ * into a communication app's window always does. This is deliberately a
+ * property of the TARGET, not the action type: clicking is LOW-friction in
+ * general, but clicking the one button labeled "Send" is not.
+ */
+export const SENSITIVE_TARGET_LABEL_PATTERN =
+  /\b(send|submit|delete|remove|pay|purchase|buy(?:\s*now)?|checkout|confirm(?:\s*order)?|place\s*order|install|uninstall|log\s*out|sign\s*out|deactivate|unsubscribe|cancel\s*subscription)\b/i;
+
 export interface ApprovalDecisionContext {
   /** Title of the window that was focused immediately before this action would run, if known. */
   activeWindowTitle?: string | null;
+  /** The visible label of the specific UI element this invocation targets, when known (vision-guided interactions only — see shared/types/visionActions.ts). */
+  targetLabel?: string | null;
 }
 
 /**
@@ -232,6 +265,14 @@ export function requiresApprovalForInvocation(
     (type === "input.typeText" || type === "input.sendShortcut") &&
     typeof context.activeWindowTitle === "string" &&
     COMMUNICATION_APP_TITLE_PATTERN.test(context.activeWindowTitle)
+  ) {
+    return true;
+  }
+
+  if (
+    (type === "input.click" || type === "input.typeText" || type === "input.sendShortcut") &&
+    typeof context.targetLabel === "string" &&
+    SENSITIVE_TARGET_LABEL_PATTERN.test(context.targetLabel)
   ) {
     return true;
   }

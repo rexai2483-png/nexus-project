@@ -18,6 +18,8 @@ import type {
   SettingsUpdateInput,
   SystemSetAlwaysOnTopInput,
   TaskGetInput,
+  VisionExecuteActionInput,
+  VisionListInteractionsInput,
 } from "../shared/types/ipc";
 
 /**
@@ -67,6 +69,8 @@ const Channels = {
   ScreenGetImageDataUrl: "screen:getImageDataUrl",
   ScreenAnalyze: "screen:analyze",
   ScreenCompare: "screen:compare",
+  VisionExecuteAction: "vision:executeAction",
+  VisionListInteractions: "vision:listInteractions",
 } as const satisfies Record<string, IpcChannel>;
 
 const nexusBridge: NexusBridge = {
@@ -122,6 +126,10 @@ const nexusBridge: NexusBridge = {
     getImageDataUrl: (input: ScreenGetImageDataUrlInput) => ipcRenderer.invoke(Channels.ScreenGetImageDataUrl, input),
     analyze: (input: ScreenAnalyzeInput) => ipcRenderer.invoke(Channels.ScreenAnalyze, input),
     compare: (input: ScreenCompareInput) => ipcRenderer.invoke(Channels.ScreenCompare, input),
+  },
+  vision: {
+    executeAction: (input: VisionExecuteActionInput) => ipcRenderer.invoke(Channels.VisionExecuteAction, input),
+    listInteractions: (input?: VisionListInteractionsInput) => ipcRenderer.invoke(Channels.VisionListInteractions, input),
   },
 };
 

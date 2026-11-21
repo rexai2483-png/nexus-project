@@ -11,6 +11,7 @@ import {
   memoryService,
   screenCaptureService,
   screenVisionService,
+  visionInteractionService,
   getAiStatus,
 } from "../../backend";
 
@@ -113,5 +114,12 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle(IpcChannels.ScreenCompare, (_event, input) =>
     screenVisionService.compareCaptures(input.beforeCaptureId, input.afterCaptureId),
+  );
+
+  ipcMain.handle(IpcChannels.VisionExecuteAction, (_event, input) =>
+    visionInteractionService.executeVisionAction(input),
+  );
+  ipcMain.handle(IpcChannels.VisionListInteractions, (_event, input) =>
+    visionInteractionService.listInteractions(input?.limit),
   );
 }

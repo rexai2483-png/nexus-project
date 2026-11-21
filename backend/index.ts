@@ -14,6 +14,7 @@ export * as agentActionService from "./services/agentActionService";
 export * as memoryService from "./services/memoryService";
 export * as screenCaptureService from "./services/screenCaptureService";
 export * as screenVisionService from "./services/screenVisionService";
+export * as visionInteractionService from "./services/visionInteractionService";
 export * as agentManager from "./agent/agentManager";
 export { prisma, disconnectDatabase, getAiStatus };
 

@@ -42,7 +42,8 @@ backend/              Node.js backend foundation (runs inside the main process)
   db/migrate.ts         Fallback migration runner for a fresh packaged-app database
   services/            One module per domain (settings, tasks, activity, approvals,
                         system, conversations, agent actions, screen captures,
-                        screen vision) — the only code that touches Prisma
+                        screen vision, vision-guided interaction) — the only
+                        code that touches Prisma
   ai/                   AI provider communication, kept separate from orchestration:
     types.ts             Provider-agnostic AiProvider interface (chat + describeImage)
     providers/anthropic.ts  The only file that imports the Anthropic SDK
@@ -57,7 +58,10 @@ backend/              Node.js backend foundation (runs inside the main process)
     agentClient.ts        Spawns the agent, speaks the authenticated local-socket
                            protocol (shared/types/agentProtocol.ts)
     agentManager.ts        Session lifecycle, approval gating, DB persistence —
-                           the only caller of agentClient.ts
+                           the only caller of agentClient.ts; also the only place
+                           an action's SETTLEMENT (success/failure/cancel/reject)
+                           is observable from elsewhere in the backend, via a
+                           small internal event emitter
 
 agent/                 Standalone Windows Agent process (plain Node, not Electron —
                         see "Windows Agent" below for why)
@@ -71,7 +75,8 @@ agent/                 Standalone Windows Agent process (plain Node, not Electro
   actions/screen.ts       screen.captureScreenshot / screen.captureActiveWindow —
                          both attach capture timestamp + active-window metadata
   actions/input.ts        input.moveMouse / input.click / input.typeText /
-                         input.sendShortcut + releaseAllInputs() for emergency stop
+                         input.sendShortcut (now also enter/tab/escape/arrows) /
+                         input.scroll + releaseAllInputs() for emergency stop
   actions/files.ts        fs.listDirectory / fs.readFileMetadata / fs.createFolder /
                          fs.createFile — sandboxed to the approved workspace only
 
@@ -89,6 +94,12 @@ shared/types/          Types shared by backend, renderer, AND the agent process
                          DetectedUiElement, BoundingBox, ScreenComparisonResult)
                          plus the pure, deterministic `compareScreenCaptures()` —
                          shared verbatim by the backend and the Preview Mode mock
+  visionActions.ts         Vision-guided interaction domain types
+                         (VisionTarget, VisionActionRequest, VisionInteractionResult)
+                         plus pure helpers — `validateVisionTarget()` (freshness),
+                         `resolveTargetCoordinates()`, and `buildVisionActionPlan()`
+                         (which underlying AgentAction(s) one vision action compiles
+                         to) — again shared verbatim by the backend and the mock
 
 src/                   React renderer (Vite root)
   components/          Sidebar, cards, empty states, task detail view, chat UI
@@ -97,7 +108,9 @@ src/                   React renderer (Vite root)
                         TaskProposalCard, EmergencyStopButton,
                         PreviewModeBanner), BoundingBoxOverlay (renders detected
                         elements over a screenshot), ScreenObservationPanel
-                        (floating-assistant screen panel)
+                        (floating-assistant screen panel), VisionInteractionPanel
+                        (pick an identified element + action, run it, watch the
+                        observe-act-verify result fill in live)
   pages/                Overview, Tasks (master-detail plan viewer), Agent (Windows
                         Agent control panel), Activity, Memory, Settings, Screen
                         (Screen Understanding workspace)
@@ -158,6 +171,30 @@ deliberately separate modules.
   the model to describe only what's visible and to ignore any instruction-like
   text that appears inside the image itself, so visual content can never
   override NEXUS's own rules.
+- Vision-guided mouse/keyboard interaction reuses the *exact same* action
+  registry, permission levels, and approval gating as every other agent
+  action — there is no second, looser execution path for "AI found this on
+  screen" to take. The renderer identifies a target only by a `captureId` +
+  `elementId` pair; the backend always re-resolves that element from its
+  own stored `ScreenCapture` row before acting on it, and every
+  security-relevant decision (freshness, the "no whole-window target" rule,
+  and the sensitive-label approval check) is made against that
+  backend-resolved type/label/bounding-box/timestamp — never against the
+  renderer's own copy of those fields, even though they're normally just an
+  echo of what the renderer itself was given. A vision action is rejected
+  outright (`INVALID_TARGET`, nothing submitted to the agent) if its target
+  isn't from the most recent screen capture or is older than 10 minutes, so
+  NEXUS never reuses coordinates from a screenshot the screen has since
+  moved on from. Clicking, typing into, or sending a key to an element
+  whose visible label looks consequential (send, submit, delete, pay,
+  install, log out, …) — or whose active window looks like a communication
+  app, as before — always requires approval, decided through the same
+  `ApprovalRequest` flow/UI as any other action. NEXUS never marks a vision
+  action "succeeded" just because the mouse/keyboard event was sent — it
+  only reports success once a verification screenshot shows a supportable
+  change (an active-window/title change, or a real detected-element
+  difference between two already-analyzed captures); otherwise it reports
+  "uncertain," never a false success.
 
 ## Database foundation
 
@@ -383,6 +420,90 @@ has a separate "Compare two captures" panel. The floating assistant's 👁
 panel (`ScreenObservationPanel.tsx`) surfaces the latest capture and a
 "Capture screen now" shortcut, and links into the full workspace.
 
+## Vision-Guided Interaction
+
+Connects screen understanding to the Windows Agent: pick an already-detected
+UI element, tell NEXUS what to do to it, and get back a real
+observe→act→verify result — never autonomous, never a second execution
+path around the agent's own validation and approval rules.
+
+**Visual targeting.** `shared/types/visionActions.ts#VisionTarget` is a
+reference to one specific `DetectedUiElement` from one specific
+`ScreenCapture` — never a bare `(x, y)`. It carries the element's type,
+label, bounding box, detection source, confidence, and the capture's own id
++ timestamp. `validateVisionTarget()` rejects a target outright — nothing is
+ever submitted to the agent — if a newer capture now exists, if the capture
+is older than 10 minutes, or if the target is the whole-window accessibility
+region rather than a specific element inside it. `resolveTargetCoordinates()`
+turns the bounding box into one absolute screen point, correctly accounting
+for an `ACTIVE_WINDOW` capture's image being offset from the full desktop
+(a `FULL_SCREEN` capture's boxes are already absolute). As with Sprint 4,
+accessibility-sourced elements are preferred wherever they exist; today the
+only one NEXUS can derive without AI is the whole-window region itself
+(not yet individual buttons/fields via a real UI Automation element tree —
+see Known limitations), so most real targets are AI-estimated for now,
+and are always labeled as such.
+
+**Mouse/keyboard actions.** `buildVisionActionPlan()` is the single place
+that maps a `VisionActionKind` (`moveMouse`, `click`, `selectMenuItem`,
+`typeText`, `scroll`, `pressKey`) onto the underlying, already-existing
+`AgentActionType`(s) it takes to do it — `input.moveMouse` / `input.click` /
+`input.typeText` / `input.sendShortcut` / the new `input.scroll`. `typeText`
+clicks the target first to focus it, then types — two ordinary agent
+actions, each independently validated and approval-gated, not a new
+all-at-once primitive. `input.sendShortcut`'s approved-key catalog now
+includes `enter`, `tab`, `escape`, `backspace`, and the arrow keys alongside
+the existing Ctrl-combinations, for closing menus/dialogs and navigating
+without a mouse. `input.scroll` is a new `LOW`-permission action
+(`agent/actions/input.ts`, via nut-js's `mouse.scrollUp/Down/Left/Right`).
+
+**Observe → Act → Verify.** `backend/services/visionInteractionService.ts`
+runs the full cycle for one target: validate it, submit the underlying
+action(s) through `agentManager.submitAction()` (the exact same entry point
+the Agent page's quick actions use), wait for each to actually settle, then
+— for every action kind except `moveMouse`, which has nothing to verify —
+capture the screen again and run the Sprint 4 `compareScreenCaptures()`
+against the before/after pair. The verdict is deliberately conservative:
+`SUCCEEDED` only when the active window's title visibly changed, or both
+captures were already AI-analyzed and real element differences were found;
+otherwise `UNCERTAIN` — NEXUS never claims success just because an input
+event was sent, and never claims a change it can't point to in the two
+screenshots. Every underlying step is a normal, durably-persisted
+`AgentAction` row (`VisionInteractionResult.steps`), so "preserve action
+history" falls out of the existing `AgentAction` table — nothing new to
+lose on restart; only the higher-level grouping/comparison view is kept
+in-memory (see Known limitations).
+
+**Error recovery.** A failed step triggers one best-effort diagnostic
+re-capture (never masking the original error) so the before/after diff is
+still available for review. Exactly one of the two *purely positional*
+action types — `input.moveMouse` and `input.scroll` — is retried once
+automatically on failure, because neither can ever double a real-world
+consequence; a failed `click`/`typeText`/`sendShortcut` is never retried
+automatically — re-identifying the target and trying again is an explicit,
+separate user action, so NEXUS can never "repeatedly click without checking
+the previous outcome."
+
+**Approval and Emergency STOP.** No new approval mechanism — a
+vision-guided click/type/shortcut goes through `requiresApprovalForInvocation()`
+exactly like any other invocation (see Security model above), now also
+considering the target element's own label. If a step needs approval, the
+interaction stops there (`AWAITING_APPROVAL`) rather than silently waiting
+in the background — approve or deny it from the Agent page like any other
+action, then re-run the interaction if you want NEXUS to verify the outcome.
+Emergency STOP is the same mechanism as always (see Windows Agent below): it
+cancels whichever underlying `AgentAction` a vision interaction happens to
+be waiting on exactly like any other in-flight action, with no special
+case needed.
+
+**Dashboard.** `src/components/VisionInteractionPanel.tsx`, embedded in the
+Screen workspace under a selected element: pick an action kind, run it, and
+watch the same `VisionInteractionResult` (steps, approval, before/after
+thumbnails, comparison) fill in live by polling `vision:listInteractions` —
+the identical channel the floating assistant's screen panel polls for its
+compact "last action: … — succeeded/uncertain/failed" line, so both surfaces
+reflect the one orchestrator rather than two independent views of it.
+
 ## Browser Preview Mode
 
 A development-only mode that makes the full visual experience explorable
@@ -439,12 +560,30 @@ local, in-memory, and reset on reload:
   (`screen.captureScreenshot` / `screen.captureActiveWindow`) in Preview Mode
   also adds one brand-new, generic, equally-labeled sample capture, the same
   way the simulated agent already handles every other action.
+- A full vision-guided interaction simulation (`vision.executeAction` /
+  `vision.listInteractions`, same shapes as the real backend, driven by the
+  exact same shared `validateVisionTarget` / `buildVisionActionPlan` /
+  `compareScreenCaptures` helpers) covering every sample scenario the sprint
+  calls for: identifying a button (any sample button/digit), selecting a
+  text field and typing into it (the Notes sample's document body — a
+  two-step focus-then-type plan, exactly like the real one), clicking a menu
+  (the Notes sample's "File" menu, which visibly opens and adds new
+  `menuItem` elements to compare against), verifying an interaction (a
+  Calculator digit/equals click regenerates the sample's displayed value and
+  image, so the before/after comparison shows a real, non-trivial change),
+  and recovering from a failed action (the Calculator "=" button
+  deliberately fails its first simulated click with a clear error, then
+  succeeds on a second attempt — demonstrating the same "no silent
+  auto-retry for a consequential action" behavior the real backend has,
+  purely through the user re-running the interaction). A fabricated
+  "Send"-labeled element also demonstrates the approval-required path.
 
 **What it will never do:** claim a real application opened, a real file was
-created, or a real screenshot was taken — simulated action results are
-tagged `preview: true` and worded accordingly; present a sample screenshot or
-its detected elements as a live observation; call anything in `agent/` or
-`backend/`; or activate outside a dev build.
+created, a real screenshot was taken, or a real click/keystroke reached a
+real computer — simulated action results are tagged `preview: true` and
+worded accordingly; present a sample screenshot or its detected elements as
+a live observation; call anything in `agent/` or `backend/`; or activate
+outside a dev build.
 
 ## Getting started
 
@@ -549,22 +688,33 @@ Implemented so far:
   element provenance, deterministic screen-change comparison, and a dedicated
   Screen workspace plus a floating-assistant screen panel — see the dedicated
   section above
+- Vision-guided interaction: click/select/type/scroll/move-pointer/press-key
+  actions targeting a specific, freshness-validated detected element, run
+  through the exact same action registry and approval gating as every other
+  agent action, with an observe→act→verify cycle that only reports success
+  when a before/after comparison actually supports it — see the dedicated
+  section above
 - Browser Preview Mode — see the dedicated section above
 
 Explicitly **not** implemented yet (by design, for a later phase):
 
-- Autonomous, AI-driven computer use — the AI still only proposes plans; every
-  Windows Agent action in this release is submitted explicitly by a human
-  through the UI, and the backend remains the sole authorization boundary
+- Autonomous, AI-driven computer use — the AI still only proposes plans, and
+  vision-guided interaction only acts on a target a human explicitly chose
+  and explicitly asked NEXUS to act on, one request at a time; every Windows
+  Agent action in this release is ultimately submitted explicitly, and the
+  backend remains the sole authorization boundary
 - File deletion or bulk file modification (the agent can only list, read
   metadata, create folders, and create/overwrite-with-approval files)
 - Autonomous *task* execution — a `Task`'s steps are still "planned, not
-  started"; only the separate, explicit Agent-page quick actions actually run
-- Any AI-driven interaction with what's on screen — screen understanding in
-  this release is strictly observation: capture, describe, detect elements,
-  and compare. There is no path from a vision result back into
-  `input.moveMouse`/`input.click`/`input.typeText`, and no continuous or
-  scheduled capture of any kind
+  started"; only the separate, explicit Agent-page quick actions and
+  vision-guided interactions actually run
+- Continuous or scheduled screen capture/observation of any kind, and any
+  multi-step vision-guided sequence that keeps going on its own after one
+  of its steps needed human approval — approving a step never auto-resumes
+  further steps; re-running the interaction is a separate, explicit action
+- Individual-element Windows UI Automation detection (today's one
+  accessibility-sourced element is still just the whole-window region;
+  specific buttons/fields are AI-estimated, always labeled as such)
 
 The dashboard reflects this honestly: when running against the real backend
 (`npm run dev` / `npm start`), Memory still shows a real, currently-empty
@@ -613,3 +763,32 @@ the real Electron bridge — see **Browser Preview Mode** above.
   `backend/db/client.ts`, which imports Electron's `app` unconditionally —
   a pre-existing constraint, not introduced this sprint), and via the
   Preview Mode mock exercising equivalent logic.
+- Vision-guided interaction's new agent-level primitives (`input.scroll` in
+  all four directions, and the new `enter`/`tab`/`escape`/`backspace`/arrow
+  entries in `input.sendShortcut`) were verified for real this sprint — not
+  just type-checked — by installing Xvfb + fluxbox + xterm in this sandbox,
+  running the actual compiled agent process, and driving it over its real
+  authenticated socket protocol with a real window focused; all four scroll
+  directions, every new key, and `app.getActiveWindow` / `input.click` /
+  `input.moveMouse` / `screen.captureActiveWindow` regressions passed
+  against real nut-js calls on a real (virtual) desktop. What this does
+  NOT cover: `backend/services/visionInteractionService.ts`'s own
+  orchestration logic (target validation, the submit→wait→verify loop,
+  retry) running against a live agent process end-to-end, since that
+  requires the full Electron runtime this sandbox can't start — it was
+  instead verified via `tsc`, and via the Preview Mode mock exercising the
+  identical shared validation/planning/comparison functions end-to-end
+  (stale-target rejection, whole-window-target rejection, a full
+  click→verify success, an approval-required click, a failed-then-recovered
+  click, a `moveMouse` with no verification, and a two-step `typeText`).
+- The grouping between one vision interaction and the `AgentAction` row(s)
+  it took is kept in memory only (`visionInteractionService`'s own history
+  array), the same way `agentManager`'s session/approval bookkeeping already
+  is — restarting NEXUS loses that view, never the underlying `AgentAction`
+  rows themselves, which remain fully persisted exactly as before.
+- `verifyWithVision` (opting a vision interaction's verification into a real
+  AI vision call on the "after" screenshot) exercises the same
+  `screenVisionService.analyzeCapture()` path Screen Understanding already
+  uses, so it inherits that feature's own untested-against-a-live-API
+  limitation above — it was verified via `tsc` and the Preview Mode mock,
+  not a real Anthropic call.

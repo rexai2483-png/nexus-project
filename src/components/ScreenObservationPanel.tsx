@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ScreenCapture } from "@shared/types/screenVision";
+import type { VisionInteractionResult } from "@shared/types/visionActions";
 
 interface ScreenObservationPanelProps {
   onOpenWorkspace: () => void;
@@ -10,6 +11,16 @@ const ANALYSIS_LABEL: Record<ScreenCapture["analysisStatus"], string> = {
   PENDING: "Analyzing…",
   ANALYZED: "Analyzed",
   FAILED: "Analysis failed",
+};
+
+const INTERACTION_STATUS_LABEL: Record<VisionInteractionResult["status"], string> = {
+  RUNNING: "running…",
+  SUCCEEDED: "succeeded",
+  UNCERTAIN: "uncertain",
+  FAILED: "failed",
+  AWAITING_APPROVAL: "awaiting approval",
+  REJECTED: "denied",
+  INVALID_TARGET: "rejected (stale target)",
 };
 
 /**
@@ -27,15 +38,18 @@ export function ScreenObservationPanel({ onOpenWorkspace }: ScreenObservationPan
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
+  const [lastInteraction, setLastInteraction] = useState<VisionInteractionResult | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [captures, status] = await Promise.all([
+      const [captures, status, interactions] = await Promise.all([
         window.nexus.screen.listCaptures({ limit: 1 }),
         window.nexus.agent.getStatus(),
+        window.nexus.vision.listInteractions({ limit: 1 }),
       ]);
       setLatest(captures[0] ?? null);
       setConnected(status.connectionState === "CONNECTED");
+      setLastInteraction(interactions[0] ?? null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load screen captures.");
@@ -44,8 +58,14 @@ export function ScreenObservationPanel({ onOpenWorkspace }: ScreenObservationPan
     }
   }, []);
 
+  // Polls (rather than just loading once) so this panel reflects the same
+  // in-progress vision interaction the Screen workspace's
+  // VisionInteractionPanel is driving — "the same task orchestrator,"
+  // not a second, independent view of it.
   useEffect(() => {
     void refresh();
+    const interval = setInterval(() => void refresh(), 3000);
+    return () => clearInterval(interval);
   }, [refresh]);
 
   useEffect(() => {
@@ -107,6 +127,17 @@ export function ScreenObservationPanel({ onOpenWorkspace }: ScreenObservationPan
       ) : (
         <p className="text-xs text-nexus-text-faint">No screen captures yet.</p>
       )}
+
+      {lastInteraction ? (
+        <button
+          type="button"
+          onClick={onOpenWorkspace}
+          className="mt-2 block w-full rounded-md border border-nexus-border px-2 py-1.5 text-left text-[11px] text-nexus-text-faint transition-colors hover:text-nexus-text"
+        >
+          Last action: {lastInteraction.actionKind} on {lastInteraction.target.label ?? lastInteraction.target.type} —{" "}
+          <span className="text-nexus-text">{INTERACTION_STATUS_LABEL[lastInteraction.status]}</span>
+        </button>
+      ) : null}
 
       <button
         type="button"
